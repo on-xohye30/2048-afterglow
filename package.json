@@ -1,11 +1,11 @@
 {
   "name": "2048_plusplus",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "private": true,
   "type": "module",
   "description": "2048_plusplus: an original Korean 2048 game with daily puzzles and private friend leagues",
   "scripts": {
-    "test": "node --test engine.test.mjs league-game.test.mjs ui-model.test.mjs backend/backend.test.mjs",
+    "test": "node --test engine.test.mjs league-game.test.mjs ui-model.test.mjs shared-game.test.mjs backend/backend.test.mjs",
     "start": "node server.mjs",
     "build": "node build.mjs",
     "dev:league": "npm run build && npx wrangler dev --config wrangler.local.jsonc",

@@ -1,7 +1,8 @@
 import { slide, canMove, spawn, createBoard, createRng, maxTile } from './engine.js';
-import { initLeague } from './league.js?v=2.1.0';
-import { modeLabel, shareRecord } from './ui-model.js?v=2.1.0';
+import { initLeague } from './league.js?v=2.2.0';
+import { modeLabel, shareRecord } from './ui-model.js?v=2.2.0';
 import { createRankedState, rankedAttempt } from './league-game.js';
+import { resolveSharedLaunch, sharedHistoryState, readSharedGame, writeSharedGame } from './shared-game.js?v=2.2.0';
 
 const $ = selector => document.querySelector(selector);
 // Compatibility keys keep existing 2048_plusplus players signed in and their saves intact.
@@ -17,17 +18,18 @@ try{saved=JSON.parse(localStorage.getItem(STORE)||'{}')||{};}catch{storageOK=fal
 if(typeof saved!=='object'||Array.isArray(saved)) saved={};
 if(!saved.games||typeof saved.games!=='object'||Array.isArray(saved.games)) saved.games={};
 if(!saved.best||typeof saved.best!=='object'||Array.isArray(saved.best)) saved.best={};
-const launchParams=new URL(location.href).searchParams;
-const requestedMode=launchParams.get('mode'),requestedDate=launchParams.get('date');
-let mode=MODES[requestedMode]&&requestedMode!=='league'?requestedMode:MODES[saved.mode]&&saved.mode!=='league'?saved.mode:'classic';
-const validDate=value=>/^\d{4}-\d{2}-\d{2}$/.test(value||'')&&Number.isFinite(Date.parse(value+'T00:00:00Z'))&&new Date(value+'T00:00:00Z').toISOString().slice(0,10)===value&&value<=dateInSeoul();
-let pinnedDay=mode==='daily'&&validDate(requestedDate)?requestedDate:null;
-let day=pinnedDay||dateInSeoul();
+let sharedLaunch=resolveSharedLaunch({href:location.href,today:dateInSeoul(),navigationType:performance.getEntriesByType('navigation')[0]?.type,historyState:window.history.state,createId:()=>[...crypto.getRandomValues(new Uint8Array(16))].map(n=>n.toString(16).padStart(2,'0')).join('')});
+if(sharedLaunch)window.history.replaceState(sharedHistoryState(window.history.state,sharedLaunch),'',location.href);
+let mode=sharedLaunch?.mode||(MODES[saved.mode]&&saved.mode!=='league'?saved.mode:'classic');
+let pinnedDay=sharedLaunch?.pinnedDay||null;
+let day=sharedLaunch?.day||dateInSeoul();
 let pendingMode=mode, shareData=null;
 // Migrate the original combined store without losing any mode's progress.
 try{for(const [key,game] of Object.entries(saved.games)){if(!localStorage.getItem(GAME_PREFIX+key))localStorage.setItem(GAME_PREFIX+key,JSON.stringify(game));}}catch{storageOK=false;}
 let state, busy=false, generation=0, timer, audio, sound=Boolean(saved.sound);
 const reducedMotion=matchMedia('(prefers-reduced-motion: reduce)');
+const desktopControls=matchMedia('(min-width:720px) and (pointer:fine)');
+let controlsPreference=typeof saved.controls==='boolean'?saved.controls:null;
 let theme=saved.theme==='dark'?'dark':'light';
 const gameKey=()=>mode==='daily'?'daily:'+day:mode;
 const isBoard=(b,size)=>Array.isArray(b)&&b.length===size*size&&b.some(Boolean)&&b.every(v=>Number.isSafeInteger(v)&&v>=0&&(v===0||(v>=2&&Math.log2(v)%1===0)));
@@ -35,17 +37,19 @@ function validState(s,size){return s&&isBoard(s.board,size)&&Number.isSafeIntege
 function randomSeed(){const numbers=new Uint32Array(1);crypto.getRandomValues(numbers);return numbers[0];}
 function freshState(){const rng=createRng(mode==='daily'?hash('afterglow-v1:'+day):randomSeed());return {board:createBoard(MODES[mode].size,rng),score:0,moves:0,seed:rng.state,streak:0,bestStreak:0,undoUsed:0,history:[],won:false,continued:false,over:false};}
 function persist(writeGame=true){
-  saved.mode=mode;saved.theme=theme;saved.sound=sound;saved.best[mode]=Math.max(Number(saved.best[mode])||0,state.score);
+  saved.theme=theme;saved.sound=sound;saved.best[mode]=Math.max(Number(saved.best[mode])||0,state.score);
   try{
     const latest=JSON.parse(localStorage.getItem(STORE)||'{}')||{};
+    saved.mode=sharedLaunch?(MODES[latest.mode]?latest.mode:saved.mode||'classic'):mode;
     for(const key of Object.keys(MODES))saved.best[key]=Math.max(Number(saved.best[key])||0,Number(latest.best?.[key])||0);
-    if(writeGame)localStorage.setItem(GAME_PREFIX+gameKey(),JSON.stringify(state));
-    localStorage.setItem(STORE,JSON.stringify({mode,theme,sound,best:saved.best}));
-    const dailyKeys=Object.keys(localStorage).filter(k=>k.startsWith(GAME_PREFIX+'daily:')&&k!==GAME_PREFIX+gameKey()).sort().reverse();
-    for(const key of dailyKeys.slice(mode==='daily'?6:7))localStorage.removeItem(key);
-  }catch{if(storageOK){storageOK=false;toast('브라우저 저장 공간이 없어 이번 진행은 자동 저장되지 않아요.');}}
+    if(writeGame){if(sharedLaunch)writeSharedGame(localStorage,sharedLaunch,mode,day,state);else localStorage.setItem(GAME_PREFIX+gameKey(),JSON.stringify(state));}
+    localStorage.setItem(STORE,JSON.stringify({mode:saved.mode,theme,sound,controls:controlsPreference,best:saved.best}));
+    if(!sharedLaunch){const dailyKeys=Object.keys(localStorage).filter(k=>k.startsWith(GAME_PREFIX+'daily:')&&k!==GAME_PREFIX+gameKey()).sort().reverse();for(const key of dailyKeys.slice(mode==='daily'?6:7))localStorage.removeItem(key);}
+  }catch{if(storageOK){storageOK=false;toast('저장 공간이 부족해 자동 저장할 수 없어요.');}}
 }
-function readGame(){try{return JSON.parse(localStorage.getItem(GAME_PREFIX+gameKey())||'null')||saved.games[gameKey()];}catch{return saved.games[gameKey()];}}
+function readGame(){try{if(sharedLaunch)return readSharedGame(localStorage,sharedLaunch,mode,day);return JSON.parse(localStorage.getItem(GAME_PREFIX+gameKey())||'null')||saved.games[gameKey()];}catch{return sharedLaunch?null:saved.games[gameKey()];}}
+function leaveSharedRound(){sharedLaunch=null;const url=new URL(location.href);for(const key of ['play','mode','date'])url.searchParams.delete(key);window.history.replaceState(sharedHistoryState(window.history.state,null),'',url);}
+function applyControls(){const show=controlsPreference??desktopControls.matches;$('#control-dock').hidden=!show;$('.shell').classList.toggle('has-controls',show);$('#controls-toggle').checked=show;}
 function loadMode(save=true){
   const candidate=readGame();
   state=validState(candidate,MODES[mode].size)?candidate:freshState();
@@ -72,17 +76,19 @@ function renderBoard(newIndex=null,merges=[]){
 const undoAvailable=()=>state.history.length>0&&state.undoUsed<MODES[mode].undos;
 function renderStats(){
   $('#score').textContent=fmt(state.score);$('#best').textContent=fmt(Math.max(Number(saved.best[mode])||0,state.score));$('#move-count').textContent=fmt(state.moves)+' 수';
-  const remain=MODES[mode].undos-state.undoUsed;$('#undo-label').textContent=(mode==='daily'||mode==='league')?'되돌리기 없음':'되돌리기 · '+(remain===Infinity?'∞':remain);$('#undo-btn').disabled=!undoAvailable();
+  for(const number of document.querySelectorAll('.score-block strong'))number.style.setProperty('--score-length',Math.max(4,number.textContent.length));
+  const remain=MODES[mode].undos-state.undoUsed;$('#undo-label').textContent=(mode==='daily'||mode==='league')?'되돌리기 없음':'되돌리기 · '+(remain===Infinity?'∞':remain);$('#undo-btn').disabled=!undoAvailable();$('#undo-count').textContent=remain===Infinity?'∞':remain;$('#undo-count').hidden=remain===0;
+  $('#gesture-hint').hidden=state.moves>0||state.over;$('#saved-game-resume').hidden=!sharedLaunch;
   const top=maxTile(state.board),level=Math.max(0,Math.min(10,Math.log2(top)-1)),next=top*2;
   $('#highest').textContent=fmt(top);$('#target-tile').textContent=next;$('#target-tile').style.fontSize=next>=10000?'16px':'';
   $('#target-progress-label').textContent=level+' / 10';$('#target-progress').setAttribute('aria-valuenow',level);$('#target-progress-fill').style.width=(level/10*100)+'%';
   $('#target-copy').textContent=top===2?'2 + 2, 첫 번째 합치기를 해볼까요?':top>=2048?'2048을 넘었어요. 한계를 더 넓혀봐요!':fmt(top)+' + '+fmt(top)+', 다음 숫자가 기다려요.';
   $('#streak-number').textContent=state.streak;$('#streak-copy').textContent=state.streak>1?state.streak+'수 연속 합치기! 최고 '+state.bestStreak+'수':state.bestStreak>0?'이번 판 최고 연속 '+state.bestStreak+'수':'합치기를 이어가 보세요.';
-  $('.streak-card').classList.toggle('active',state.streak>1);
+  $('.streak-card').classList.toggle('active',state.streak>1);$('.streak-card').hidden=state.streak<2;
   $('#daily-date').textContent=dateInSeoul().replaceAll('-',' . ')+' · KST';$('#daily-number').textContent=dateInSeoul().slice(-2);
-  $('#ranked-banner').hidden=mode!=='league';if(mode==='league')$('#ranked-label').textContent=state.run.day+' · '+(state.submitted?'등록한 대결':'되돌리기 없는 친구 대결');
+  $('#ranked-banner').hidden=mode!=='league';if(mode==='league')$('#ranked-label').textContent=state.run.day+' · '+(state.submitted?'등록 완료':'대결 중');
   $('#mode-caption').textContent=mode==='league'?'기록 등록을 누르면 친구방 순위에 반영돼요.':mode==='daily'?day+(pinnedDay?' · 공유받은 데일리 퍼즐':' · 되돌리기 없는 오늘의 퍼즐'):mode==='zen'?'넓어진 보드, 서두르지 않아도 괜찮아요.':'같은 숫자 둘이 만나면, 더 큰 하나로.';
-  $('#mode-picker-label').textContent=modeLabel(mode);if(!$('#mode-dialog').open){pendingMode=mode;renderModeChoices();}
+  $('#mode-picker-label').textContent=modeLabel(mode);if(mode==='daily'&&day!==dateInSeoul())$('#mode-picker-label').textContent=day.slice(5).replace('-','.')+' 도전';if(!$('#mode-dialog').open){pendingMode=mode;renderModeChoices();}
   $('#game-panel').setAttribute('aria-label',modeLabel(mode)+' 게임');
   const win=state.won&&!state.continued&&!state.submitted;$('#game-overlay').hidden=!win&&!state.over&&!state.submitted;
   if(mode==='league'&&state.submitted){$('#overlay-kicker').textContent='SCORE VERIFIED';$('#overlay-title').textContent='기록을 등록했어요!';$('#overlay-copy').textContent=fmt(state.score)+'점. 친구들의 기록과 비교해 보세요.';$('#overlay-primary').textContent='친구 순위 보기';$('#overlay-secondary').hidden=true;}
@@ -91,8 +97,15 @@ function renderStats(){
 }
 function renderAll(){renderBoard();renderStats();}
 function toast(text){clearTimeout(timer);$('#toast').textContent=text;$('#toast').hidden=false;timer=setTimeout(()=>{$('#toast').hidden=true;},3000);}
-function checkDay(){if(pinnedDay)return false;const today=dateInSeoul();if(today===day)return false;persist();day=today;if(mode==='daily'){generation++;busy=false;loadMode();toast('새로운 날이에요. 오늘의 퍼즐을 준비했어요.');return true;}renderStats();return false;}
-function selectMode(next){if(next==='league'){document.dispatchEvent(new CustomEvent('afterglow:league-open'));return;}if(!MODES[next]||(next===mode&&!pinnedDay))return;persist();generation++;busy=false;pinnedDay=null;day=dateInSeoul();mode=next;const cleanURL=new URL(location.href);cleanURL.searchParams.delete('mode');cleanURL.searchParams.delete('date');window.history.replaceState(null,'',cleanURL);loadMode();$('#game-status').textContent=MODES[mode].name+' 선택. 점수 '+state.score+'.';}
+function checkDay(){
+  if(pinnedDay)return false;const today=dateInSeoul();if(today===day)return false;
+  persist();day=today;
+  if(sharedLaunch){sharedLaunch.day=today;sharedLaunch.signature=mode+':'+(mode==='daily'?today:'any');window.history.replaceState(sharedHistoryState(window.history.state,sharedLaunch),'',location.href);}
+  if(mode==='daily'){generation++;busy=false;loadMode();toast('오늘의 새 퍼즐이에요.');return true;}
+  renderStats();return false;
+}
+function selectMode(next){if(next==='league'){document.dispatchEvent(new CustomEvent('afterglow:league-open'));return;}if(!MODES[next]||(next===mode&&(!pinnedDay||(sharedLaunch&&day===dateInSeoul()))))return;persist();generation++;busy=false;leaveSharedRound();pinnedDay=null;day=dateInSeoul();mode=next;loadMode();$('#game-status').textContent=MODES[mode].name+' 선택. 점수 '+state.score+'.';}
+$('#saved-game-resume').addEventListener('click',()=>{if(!sharedLaunch)return;persist();$('#mode-dialog').close();generation++;busy=false;leaveSharedRound();mode=MODES[saved.mode]&&saved.mode!=='league'?saved.mode:'classic';pinnedDay=null;day=dateInSeoul();loadMode();$('#board').focus({preventScroll:true});toast('이전 판을 이어해요.');});
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function move(direction){
   if(busy||document.querySelector('dialog[open]')||checkDay()||state.over||state.submitted||(state.won&&!state.continued))return;
@@ -113,8 +126,8 @@ async function move(direction){
   else $('#game-status').textContent=state.moves+'수. '+state.score+'점. 가장 큰 타일 '+maxTile(state.board)+(result.scoreGain?'. 이번 이동 '+result.scoreGain+'점':'');
   busy=false;
 }
-function undo(){if(busy||checkDay()||!undoAvailable())return;const used=state.undoUsed+1,history=state.history,previous=history.pop();state={...previous,board:[...previous.board],history,undoUsed:used};generation++;renderAll();persist();toast('한 수 되돌렸어요. 다른 방향으로 가볼까요?');$('#board').focus({preventScroll:true});}
-function restart(){if(mode==='league'){document.dispatchEvent(new CustomEvent('afterglow:league-open'));return;}generation++;busy=false;day=pinnedDay||dateInSeoul();state=freshState();renderAll();persist();$('#board').focus({preventScroll:true});toast(mode==='daily'?'오늘과 같은 퍼즐로 다시 시작해요.':'새로운 한 판, 가볍게 시작해요.');}
+function undo(){if(busy||checkDay()||!undoAvailable())return;const used=state.undoUsed+1,history=state.history,previous=history.pop();state={...previous,board:[...previous.board],history,undoUsed:used};generation++;renderAll();persist();toast('한 수 되돌렸어요.');$('#board').focus({preventScroll:true});}
+function restart(){if(mode==='league'){document.dispatchEvent(new CustomEvent('afterglow:league-open'));return;}generation++;busy=false;day=pinnedDay||dateInSeoul();state=freshState();renderAll();persist();$('#board').focus({preventScroll:true});toast(mode==='daily'?'같은 퍼즐로 다시 시작해요.':'새 판을 시작해요.');}
 function requestRestart(){if(busy)return;if(mode==='league'){document.dispatchEvent(new CustomEvent('afterglow:league-open'));return;}if(state.moves>0){$('#restart-score').textContent=fmt(state.score);$('#restart-moves').textContent=fmt(state.moves)+' 수';$('#restart-tile').textContent=fmt(maxTile(state.board));$('#restart-dialog').showModal();}else restart();}
 function renderModeChoices(){for(const button of document.querySelectorAll('[data-mode]')){const active=button.dataset.mode===pendingMode;button.setAttribute('aria-checked',String(active));button.tabIndex=active?0:-1;}}
 $('#mode-picker').addEventListener('click',()=>{pendingMode=mode;renderModeChoices();$('#mode-dialog').showModal();$('#mode-picker').setAttribute('aria-expanded','true');$('#mode-'+pendingMode).focus();});
@@ -137,7 +150,10 @@ $('#board').addEventListener('pointercancel',()=>{pointer=null;});
 $('#undo-btn').addEventListener('click',undo);$('#new-btn').addEventListener('click',requestRestart);$('#restart-cancel').addEventListener('click',()=>$('#restart-dialog').close());$('#restart-confirm').addEventListener('click',()=>{$('#restart-dialog').close();restart();});
 $('#overlay-primary').addEventListener('click',()=>{if(mode==='league'&&(state.submitted||state.over)){document.dispatchEvent(new CustomEvent('afterglow:league-open'));return;}if(state.won&&!state.continued){state.continued=true;renderStats();persist();$('#board').focus({preventScroll:true});}else restart();});
 $('#overlay-secondary').addEventListener('click',()=>{if(state.won&&!state.continued)requestRestart();else undo();});
-$('#help-btn').addEventListener('click',()=>$('#help-dialog').showModal());
+$('#settings-btn').addEventListener('click',()=>$('#settings-dialog').showModal());
+$('#controls-toggle').addEventListener('change',()=>{controlsPreference=$('#controls-toggle').checked;applyControls();persist(false);});
+desktopControls.addEventListener('change',applyControls);
+$('#help-btn').addEventListener('click',()=>{$('#settings-dialog').close();$('#help-dialog').showModal();});
 $('#theme-btn').addEventListener('click',()=>{theme=theme==='light'?'dark':'light';applyTheme();persist(false);});
 $('#sound-btn').addEventListener('click',()=>{sound=!sound;applySound();persist(false);playTone(true);toast(sound?'효과음을 켰어요.':'효과음을 껐어요.');});
 $('#share-btn').addEventListener('click',()=>{
@@ -146,21 +162,22 @@ $('#share-btn').addEventListener('click',()=>{
   $('#share-date').textContent=shareData.day.replaceAll('-','. ');$('#share-date').dateTime=shareData.day;
   $('#share-text').value=shareData.text;$('#share-fallback').hidden=true;$('#share-native').hidden=typeof navigator.share!=='function';$('#share-dialog').showModal();
 });
-async function copyShareRecord(){if(!shareData)return;try{if(!navigator.clipboard)throw new Error('Clipboard unavailable');await navigator.clipboard.writeText(shareData.text);$('#share-copy').textContent='복사했어요';setTimeout(()=>$('#share-copy').textContent='기록과 링크 복사',2200);}catch{$('#share-fallback').hidden=false;$('#share-text').focus();$('#share-text').select();}}
+async function copyShareRecord(){if(!shareData)return;try{if(!navigator.clipboard)throw new Error('Clipboard unavailable');await navigator.clipboard.writeText(shareData.text);$('#share-copy').textContent='복사했어요';setTimeout(()=>$('#share-copy').textContent='기록·링크 복사',2200);}catch{$('#share-fallback').hidden=false;$('#share-text').focus();$('#share-text').select();}}
 $('#share-copy').addEventListener('click',copyShareRecord);
 $('#share-native').addEventListener('click',async()=>{if(!shareData)return;try{await navigator.share({title:shareData.title,text:shareData.text});}catch(error){if(error.name!=='AbortError')await copyShareRecord();}});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkDay();});
 window.addEventListener('storage',event=>{
   if(event.key===STORE&&event.newValue){try{const other=JSON.parse(event.newValue);for(const key of Object.keys(MODES))saved.best[key]=Math.max(Number(saved.best[key])||0,Number(other.best?.[key])||0);renderStats();}catch{}}
   if(event.key===GAME_PREFIX+'league'&&event.newValue===null)clearLeagueIdentity();
-  if(event.key===GAME_PREFIX+gameKey()&&event.newValue){try{const incoming=JSON.parse(event.newValue);if(validState(incoming,MODES[mode].size)&&JSON.stringify(incoming)!==JSON.stringify(state)){generation++;busy=false;loadMode(false);toast('다른 탭의 최신 진행을 이어받았어요.');}}catch{}}
+  if(!sharedLaunch&&event.key===GAME_PREFIX+gameKey()&&event.newValue){try{const incoming=JSON.parse(event.newValue);if(validState(incoming,MODES[mode].size)&&JSON.stringify(incoming)!==JSON.stringify(state)){generation++;busy=false;loadMode(false);toast('다른 탭의 최신 진행을 이어받았어요.');}}catch{}}
 });
-applyTheme();applySound();loadMode();
+applyTheme();applySound();applyControls();loadMode();
 if(!storageOK)toast('이 브라우저에서는 기록 저장이 제한될 수 있어요.');
+else if(sharedLaunch&&!sharedLaunch.restoring)toast('공유받은 새 판이에요. 이전 판은 보관돼요.');
 
 function clearLeagueIdentity(){generation++;busy=false;saved.best.league=0;if(mode==='league'){mode='classic';pinnedDay=null;day=dateInSeoul();loadMode();}else persist(false);try{localStorage.removeItem(GAME_PREFIX+'league');}catch{}}
 function storedLeagueState(){try{return mode==='league'?state:JSON.parse(localStorage.getItem(GAME_PREFIX+'league')||'null');}catch{return null;}}
-function useLeagueState(next){generation++;busy=false;if(mode!=='league')persist();mode='league';pinnedDay=null;day=dateInSeoul();state=next;renderAll();persist();$('#board').focus({preventScroll:true});}
+function useLeagueState(next){generation++;busy=false;if(mode!=='league')persist();leaveSharedRound();mode='league';pinnedDay=null;day=dateInSeoul();state=next;renderAll();persist();$('#board').focus({preventScroll:true});}
 $('#ranked-open').addEventListener('click',()=>document.dispatchEvent(new CustomEvent('afterglow:league-open')));
 initLeague({
   toast,

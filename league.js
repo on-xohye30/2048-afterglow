@@ -77,7 +77,7 @@ export function initLeague(game) {
     if(!dialog.open)dialog.showModal();$('#league-copy-box').hidden=true;$('#league-confirm').hidden=true;
     if(!config?.enabled){$('#league-login').hidden=true;message('친구 대결 서버가 아직 연결되지 않았어요. 혼자 플레이는 계속 이용할 수 있어요.',true);return;}
     if(!config.authConfigured){$('#league-login').hidden=true;message('친구방 서버 설정을 확인 중이에요. 잠시 후 다시 시도해 주세요.',true);return;}
-    message('친구방을 불러오는 중이에요…');try{await refresh();message('친구방 순위는 참가자에게만 보여요.');}catch(error){showError(error);}
+    message('친구방을 불러오는 중이에요…');try{await refresh();message('');}catch(error){showError(error);}
   }
   async function copyInvite(){const url=inviteURL();try{await navigator.clipboard.writeText(url);message('초대 링크를 복사했어요. 카톡에 붙여넣어 보내세요.');}catch{$('#league-copy-text').value=url;$('#league-copy-box').hidden=false;$('#league-copy-text').focus();$('#league-copy-text').select();message('아래 링크를 직접 복사해 주세요.');}}
   async function startRun(){const result=await api('/rooms/'+roomId+'/runs',{method:'POST'});game.startRun(result.run);dialog.close();game.toast('친구 대결 시작! 오늘은 모두 같은 퍼즐이에요.');}

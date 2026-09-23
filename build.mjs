@@ -5,7 +5,7 @@ const root=path.dirname(fileURLToPath(import.meta.url));
 const target=path.join(root,'public');
 await rm(target,{recursive:true,force:true});
 await mkdir(path.join(target,'assets'),{recursive:true});
-const files=['index.html','styles.css','app.js','ui-model.js','engine.js','favicon.svg','league.js','league.css','league-game.js','privacy.html','_headers'];
+const files=['index.html','styles.css','app.js','ui-model.js','shared-game.js','engine.js','favicon.svg','league.js','league.css','league-game.js','privacy.html','_headers'];
 for(const file of files)await copyFile(path.join(root,file),path.join(target,file));
 await mkdir(path.join(target,'assets/fonts'),{recursive:true});
 const fonts=(await readdir(path.join(root,'assets/fonts'))).filter(name=>/\.(woff2|css|txt)$/.test(name));
