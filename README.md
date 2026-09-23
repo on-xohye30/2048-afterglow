@@ -2,7 +2,7 @@
 
 한 수 더, 2048. 로그인 없이 가볍게 즐기는 한국어 숫자 퍼즐입니다.
 
-**플레이:** https://on-xohye30.github.io/2048-afterglow/
+**플레이:** https://on-xohye30.github.io/2048-plusplus/
 
 ## 포크 없이 새로 만든 게임
 
