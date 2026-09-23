@@ -85,7 +85,7 @@ function renderStats(){
 function renderAll(){renderBoard();renderStats();}
 function toast(text){clearTimeout(timer);$('#toast').textContent=text;$('#toast').hidden=false;timer=setTimeout(()=>{$('#toast').hidden=true;},3000);}
 function checkDay(){if(pinnedDay)return false;const today=dateInSeoul();if(today===day)return false;persist();day=today;if(mode==='daily'){generation++;busy=false;loadMode();toast('새로운 날이에요. 오늘의 퍼즐을 준비했어요.');return true;}renderStats();return false;}
-function selectMode(next){if(!MODES[next]||(next===mode&&!pinnedDay))return;persist();generation++;busy=false;pinnedDay=null;day=dateInSeoul();mode=next;loadMode();$('#game-status').textContent=MODES[mode].name+' 선택. 점수 '+state.score+'.';}
+function selectMode(next){if(!MODES[next]||(next===mode&&!pinnedDay))return;persist();generation++;busy=false;pinnedDay=null;day=dateInSeoul();mode=next;const cleanURL=new URL(location.href);cleanURL.searchParams.delete('mode');cleanURL.searchParams.delete('date');window.history.replaceState(null,'',cleanURL);loadMode();$('#game-status').textContent=MODES[mode].name+' 선택. 점수 '+state.score+'.';}
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function move(direction){
   if(busy||document.querySelector('dialog[open]')||checkDay()||state.over||(state.won&&!state.continued))return;
