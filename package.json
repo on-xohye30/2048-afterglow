@@ -1,11 +1,11 @@
 {
-  "name": "2048-afterglow",
-  "version": "2.0.1",
+  "name": "2048_plusplus",
+  "version": "2.1.0",
   "private": true,
   "type": "module",
-  "description": "An original, dependency-free 2048 playground with daily and 5x5 modes",
+  "description": "2048_plusplus: an original Korean 2048 game with daily puzzles and private friend leagues",
   "scripts": {
-    "test": "node --test engine.test.mjs league-game.test.mjs backend/backend.test.mjs",
+    "test": "node --test engine.test.mjs league-game.test.mjs ui-model.test.mjs backend/backend.test.mjs",
     "start": "node server.mjs",
     "build": "node build.mjs",
     "dev:league": "npm run build && npx wrangler dev --config wrangler.local.jsonc",

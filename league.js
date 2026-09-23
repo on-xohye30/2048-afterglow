@@ -67,7 +67,7 @@ export function initLeague(game) {
     $('#league-rank-caption').textContent=period==='daily'?data.day+' · KST':'월요일부터 오늘까지 · KST';
     for(const b of document.querySelectorAll('[data-period]'))b.setAttribute('aria-pressed',String(b.dataset.period===period));
     const body=$('#league-ranking');body.replaceChildren();
-    for(const entry of data.entries){const tr=document.createElement('tr');if(entry.userId===me.id)tr.className='is-me';for(const [i,value] of [entry.rank,entry.nickname+(entry.userId===me.id?' (나)':''),format(entry.score),format(entry.maxTile)].entries()){const td=document.createElement(i===1?'th':'td');if(i===1)td.scope='row';td.textContent=value;tr.append(td);}body.append(tr);}
+    for(const entry of data.entries){const tr=document.createElement('tr');if(entry.userId===me.id)tr.className='is-me';for(const [i,value] of [entry.rank,entry.nickname+(entry.userId===me.id?' (나)':''),format(entry.score),format(entry.maxTile)].entries()){const td=document.createElement(i===1?'th':'td');if(i===1){td.scope='row';const player=document.createElement('span'),avatar=document.createElement('span'),name=document.createElement('span');player.className='league-player';avatar.className='league-avatar';avatar.setAttribute('aria-hidden','true');avatar.textContent=Array.from(entry.nickname)[0]||'';name.textContent=value;player.append(avatar,name);td.append(player);}else td.textContent=value;tr.append(td);}body.append(tr);}
     $('#league-empty').hidden=data.entries.length>0;$('#league-my-rank').textContent=data.myRank?'내 순위 '+data.myRank+'위 · '+data.entries.length+'명 참가':'아직 등록한 기록이 없어요.';
     $('#league-native-share').hidden=!navigator.share;renderAttempt();
   }
@@ -90,7 +90,7 @@ export function initLeague(game) {
   $('#league-dismiss-invite').addEventListener('click',clearInvite);
   for(const button of document.querySelectorAll('[data-period]'))button.addEventListener('click',async()=>{period=button.dataset.period;try{await refreshRanking();}catch(error){showError(error);}});
   $('#league-copy').addEventListener('click',copyInvite);
-  $('#league-native-share').addEventListener('click',async()=>{try{await navigator.share({title:'2048 Afterglow · 친구 대결',text:'같은 퍼즐, 우리끼리 한 판! 친구방에서 기록을 겨뤄요.',url:inviteURL()});}catch(error){if(error.name!=='AbortError')await copyInvite();}});
+  $('#league-native-share').addEventListener('click',async()=>{try{await navigator.share({title:'2048_plusplus · 친구 대결',text:'같은 퍼즐, 우리끼리 한 판! 친구방에서 기록을 겨뤄요.',url:inviteURL()});}catch(error){if(error.name!=='AbortError')await copyInvite();}});
   $('#league-start').addEventListener('click',()=>{const attempt=currentAttempt();if(attempt&&!attempt.submitted&&attempt.moves.length)ask('현재 대결을 새 판으로 바꿀까요? 아직 등록하지 않은 현재 이동 기록은 복원할 수 없어요.',()=>action($('#league-start'),startRun));else action($('#league-start'),startRun);});
   $('#league-resume').addEventListener('click',()=>{const attempt=currentAttempt();if(attempt){game.resumeRun();dialog.close();}});
   $('#league-submit').addEventListener('click',()=>action($('#league-submit'),async()=>{const attempt=currentAttempt();if(!attempt||!attempt.moves.length)throw {code:'INVALID_MOVES'};const result=await api('/runs/'+attempt.id+'/submit',{method:'POST',data:{moves:attempt.moves}});game.markSubmitted(attempt.id);await refreshRanking();message(format(result.result.score)+'점 등록 완료!'+(result.result.personalBest?' 오늘의 내 최고 기록이에요.':''));}));

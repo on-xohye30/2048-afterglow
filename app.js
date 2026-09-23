@@ -1,8 +1,10 @@
 import { slide, canMove, spawn, createBoard, createRng, maxTile } from './engine.js';
-import { initLeague } from './league.js?v=2.0.1';
+import { initLeague } from './league.js?v=2.1.0';
+import { modeLabel, shareRecord } from './ui-model.js?v=2.1.0';
 import { createRankedState, rankedAttempt } from './league-game.js';
 
 const $ = selector => document.querySelector(selector);
+// Compatibility keys keep existing 2048_plusplus players signed in and their saves intact.
 const STORE = 'afterglow2048:v1';
 const GAME_PREFIX = STORE+':game:';
 const MODES = {classic:{size:4,name:'클래식',undos:3},daily:{size:4,name:'오늘의 도전',undos:0},zen:{size:5,name:'여유 모드',undos:Infinity},league:{size:4,name:'친구 대결',undos:0}};
@@ -21,6 +23,7 @@ let mode=MODES[requestedMode]&&requestedMode!=='league'?requestedMode:MODES[save
 const validDate=value=>/^\d{4}-\d{2}-\d{2}$/.test(value||'')&&Number.isFinite(Date.parse(value+'T00:00:00Z'))&&new Date(value+'T00:00:00Z').toISOString().slice(0,10)===value&&value<=dateInSeoul();
 let pinnedDay=mode==='daily'&&validDate(requestedDate)?requestedDate:null;
 let day=pinnedDay||dateInSeoul();
+let pendingMode=mode, shareData=null;
 // Migrate the original combined store without losing any mode's progress.
 try{for(const [key,game] of Object.entries(saved.games)){if(!localStorage.getItem(GAME_PREFIX+key))localStorage.setItem(GAME_PREFIX+key,JSON.stringify(game));}}catch{storageOK=false;}
 let state, busy=false, generation=0, timer, audio, sound=Boolean(saved.sound);
@@ -53,7 +56,7 @@ function loadMode(save=true){
   state.won=maxTile(state.board)>=2048;state.over=!canMove(state.board);state.continued=Boolean(state.continued);
   renderAll();if(save)persist();
 }
-function applyTheme(){document.documentElement.dataset.theme=theme;$('#theme-btn').setAttribute('aria-pressed',String(theme==='dark'));$('#theme-btn').setAttribute('aria-label',theme==='dark'?'라이트 모드 켜기':'다크 모드 켜기');document.querySelector('meta[name="theme-color"]').content=theme==='dark'?'#18251f':'#f6f3ec';}
+function applyTheme(){document.documentElement.dataset.theme=theme;$('#theme-btn').setAttribute('aria-pressed',String(theme==='dark'));$('#theme-btn').setAttribute('aria-label',theme==='dark'?'라이트 모드 켜기':'다크 모드 켜기');document.querySelector('meta[name="theme-color"]').content=theme==='dark'?'#211e1c':'#f6f3ec';}
 function applySound(){const b=$('#sound-btn');b.setAttribute('aria-pressed',String(sound));b.setAttribute('aria-label',sound?'효과음 끄기':'효과음 켜기');b.innerHTML=sound?'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Zm5 3a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/></svg>':'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Zm5 4 5 6m0-6-5 6"/></svg>';}
 function playTone(merged){if(!sound)return;try{audio ||= new (window.AudioContext||window.webkitAudioContext)();if(audio.state==='suspended')audio.resume();const now=audio.currentTime;const oscillator=audio.createOscillator(),gain=audio.createGain();oscillator.type='sine';oscillator.frequency.setValueAtTime(merged?390+Math.min(state.streak,8)*45:210,now);gain.gain.setValueAtTime(.035,now);gain.gain.exponentialRampToValueAtTime(.001,now+.11);oscillator.connect(gain);gain.connect(audio.destination);oscillator.start(now);oscillator.stop(now+.12);}catch{}}
 function tile(value,index,extra=''){
@@ -71,16 +74,16 @@ function renderStats(){
   $('#score').textContent=fmt(state.score);$('#best').textContent=fmt(Math.max(Number(saved.best[mode])||0,state.score));$('#move-count').textContent=fmt(state.moves)+' 수';
   const remain=MODES[mode].undos-state.undoUsed;$('#undo-label').textContent=(mode==='daily'||mode==='league')?'되돌리기 없음':'되돌리기 · '+(remain===Infinity?'∞':remain);$('#undo-btn').disabled=!undoAvailable();
   const top=maxTile(state.board),level=Math.max(0,Math.min(10,Math.log2(top)-1)),next=top*2;
-  $('#highest').textContent=fmt(top);$('#target-tile').textContent=next;$('#target-tile').style.fontSize=next>=10000?'23px':'';
+  $('#highest').textContent=fmt(top);$('#target-tile').textContent=next;$('#target-tile').style.fontSize=next>=10000?'16px':'';
   $('#target-progress-label').textContent=level+' / 10';$('#target-progress').setAttribute('aria-valuenow',level);$('#target-progress-fill').style.width=(level/10*100)+'%';
   $('#target-copy').textContent=top===2?'2 + 2, 첫 번째 합치기를 해볼까요?':top>=2048?'2048을 넘었어요. 한계를 더 넓혀봐요!':fmt(top)+' + '+fmt(top)+', 다음 숫자가 기다려요.';
   $('#streak-number').textContent=state.streak;$('#streak-copy').textContent=state.streak>1?state.streak+'수 연속 합치기! 최고 '+state.bestStreak+'수':state.bestStreak>0?'이번 판 최고 연속 '+state.bestStreak+'수':'합치기를 이어가 보세요.';
   $('.streak-card').classList.toggle('active',state.streak>1);
-  $('#daily-date').textContent=dateInSeoul().replaceAll('-',' . ')+' · KST';
+  $('#daily-date').textContent=dateInSeoul().replaceAll('-',' . ')+' · KST';$('#daily-number').textContent=dateInSeoul().slice(-2);
   $('#ranked-banner').hidden=mode!=='league';if(mode==='league')$('#ranked-label').textContent=state.run.day+' · '+(state.submitted?'등록한 대결':'되돌리기 없는 친구 대결');
   $('#mode-caption').textContent=mode==='league'?'기록 등록을 누르면 친구방 순위에 반영돼요.':mode==='daily'?day+(pinnedDay?' · 공유받은 데일리 퍼즐':' · 되돌리기 없는 오늘의 퍼즐'):mode==='zen'?'넓어진 보드, 서두르지 않아도 괜찮아요.':'같은 숫자 둘이 만나면, 더 큰 하나로.';
-  for(const button of document.querySelectorAll('[data-mode]')){const active=button.dataset.mode===mode;button.setAttribute('aria-selected',String(active));button.tabIndex=active?0:-1;}
-  $('#game-panel').setAttribute('aria-labelledby','mode-'+mode);
+  $('#mode-picker-label').textContent=modeLabel(mode);if(!$('#mode-dialog').open){pendingMode=mode;renderModeChoices();}
+  $('#game-panel').setAttribute('aria-label',modeLabel(mode)+' 게임');
   const win=state.won&&!state.continued&&!state.submitted;$('#game-overlay').hidden=!win&&!state.over&&!state.submitted;
   if(mode==='league'&&state.submitted){$('#overlay-kicker').textContent='SCORE VERIFIED';$('#overlay-title').textContent='기록을 등록했어요!';$('#overlay-copy').textContent=fmt(state.score)+'점. 친구들의 기록과 비교해 보세요.';$('#overlay-primary').textContent='친구 순위 보기';$('#overlay-secondary').hidden=true;}
   else if(win){$('#overlay-kicker').textContent='YOU MADE IT';$('#overlay-title').textContent='2048, 해냈어요!';$('#overlay-copy').textContent=fmt(state.score)+'점. 이제 4096을 향해 가볼까요?';$('#overlay-primary').textContent='계속 플레이';$('#overlay-secondary').textContent='새 게임';$('#overlay-secondary').hidden=false;}
@@ -112,10 +115,14 @@ async function move(direction){
 }
 function undo(){if(busy||checkDay()||!undoAvailable())return;const used=state.undoUsed+1,history=state.history,previous=history.pop();state={...previous,board:[...previous.board],history,undoUsed:used};generation++;renderAll();persist();toast('한 수 되돌렸어요. 다른 방향으로 가볼까요?');$('#board').focus({preventScroll:true});}
 function restart(){if(mode==='league'){document.dispatchEvent(new CustomEvent('afterglow:league-open'));return;}generation++;busy=false;day=pinnedDay||dateInSeoul();state=freshState();renderAll();persist();$('#board').focus({preventScroll:true});toast(mode==='daily'?'오늘과 같은 퍼즐로 다시 시작해요.':'새로운 한 판, 가볍게 시작해요.');}
-function requestRestart(){if(busy)return;if(mode==='league'){document.dispatchEvent(new CustomEvent('afterglow:league-open'));return;}if(state.moves>0)$('#restart-dialog').showModal();else restart();}
-for(const b of document.querySelectorAll('[data-mode]'))b.addEventListener('click',()=>{selectMode(b.dataset.mode);$('#board').focus({preventScroll:true});});
-$('.mode-tabs').addEventListener('keydown',event=>{const keys=['ArrowLeft','ArrowRight','Home','End'];if(!keys.includes(event.key))return;event.preventDefault();event.stopPropagation();const modes=Object.keys(MODES).filter(key=>!$('#mode-'+key)?.hidden),i=modes.indexOf(mode),next=event.key==='Home'?0:event.key==='End'?modes.length-1:(i+(event.key==='ArrowRight'?1:modes.length-1))%modes.length;selectMode(modes[next]);$('#mode-'+mode).focus();});
-$('#daily-card').addEventListener('click',()=>{selectMode('daily');$('#board').focus({preventScroll:true});});
+function requestRestart(){if(busy)return;if(mode==='league'){document.dispatchEvent(new CustomEvent('afterglow:league-open'));return;}if(state.moves>0){$('#restart-score').textContent=fmt(state.score);$('#restart-moves').textContent=fmt(state.moves)+' 수';$('#restart-tile').textContent=fmt(maxTile(state.board));$('#restart-dialog').showModal();}else restart();}
+function renderModeChoices(){for(const button of document.querySelectorAll('[data-mode]')){const active=button.dataset.mode===pendingMode;button.setAttribute('aria-checked',String(active));button.tabIndex=active?0:-1;}}
+$('#mode-picker').addEventListener('click',()=>{pendingMode=mode;renderModeChoices();$('#mode-dialog').showModal();$('#mode-picker').setAttribute('aria-expanded','true');$('#mode-'+pendingMode).focus();});
+$('#mode-dialog').addEventListener('close',()=>$('#mode-picker').setAttribute('aria-expanded','false'));
+for(const b of document.querySelectorAll('[data-mode]'))b.addEventListener('click',()=>{pendingMode=b.dataset.mode;renderModeChoices();});
+$('.mode-tabs').addEventListener('keydown',event=>{const keys=['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End'];if(!keys.includes(event.key))return;event.preventDefault();event.stopPropagation();const modes=Object.keys(MODES).filter(key=>!$('#mode-'+key).hidden),i=modes.indexOf(pendingMode),forward=event.key==='ArrowRight'||event.key==='ArrowDown',next=event.key==='Home'?0:event.key==='End'?modes.length-1:(i+(forward?1:modes.length-1))%modes.length;pendingMode=modes[next];renderModeChoices();$('#mode-'+pendingMode).focus();});
+$('#mode-start').addEventListener('click',()=>{const next=pendingMode;$('#mode-dialog').close();selectMode(next);if(next!=='league')$('#board').focus({preventScroll:true});});
+for(const button of document.querySelectorAll('[data-close-dialog]'))button.addEventListener('click',()=>document.getElementById(button.dataset.closeDialog).close());
 for(const b of document.querySelectorAll('[data-direction]'))b.addEventListener('click',()=>move(b.dataset.direction));
 document.addEventListener('keydown',event=>{
   if(event.ctrlKey||event.metaKey||event.altKey||event.isComposing||document.querySelector('dialog[open]'))return;
@@ -133,11 +140,15 @@ $('#overlay-secondary').addEventListener('click',()=>{if(state.won&&!state.conti
 $('#help-btn').addEventListener('click',()=>$('#help-dialog').showModal());
 $('#theme-btn').addEventListener('click',()=>{theme=theme==='light'?'dark':'light';applyTheme();persist(false);});
 $('#sound-btn').addEventListener('click',()=>{sound=!sound;applySound();persist(false);playTone(true);toast(sound?'효과음을 켰어요.':'효과음을 껐어요.');});
-$('#share-btn').addEventListener('click',async()=>{
-  const shareURL=new URL(location.href);shareURL.search='';shareURL.hash='';shareURL.searchParams.set('mode',mode);if(mode==='daily')shareURL.searchParams.set('date',day);
-  const text=['2048 Afterglow · '+MODES[mode].name+(mode==='daily'?' ('+day+')':''),fmt(state.score)+'점 · '+fmt(state.moves)+'수','가장 큰 타일 '+fmt(maxTile(state.board))+' · 최고 연속 합치기 '+state.bestStreak+'수',mode==='daily'?'같은 퍼즐에서 나와 한 판 어때요?':'한 수 더, 가볍게 즐겨봐요.',shareURL.href].join('\n');
-  try{if(!navigator.clipboard)throw new Error('clipboard unavailable');await navigator.clipboard.writeText(text);toast('기록과 게임 링크를 복사했어요.');}catch{$('#share-text').value=text;$('#share-dialog').showModal();$('#share-text').focus();$('#share-text').select();}
+$('#share-btn').addEventListener('click',()=>{
+  shareData=shareRecord({mode,day:mode==='league'?state.run.day:day,score:state.score,moves:state.moves,highest:maxTile(state.board),bestStreak:state.bestStreak},location.href);
+  for(const key of ['score','moves','highest','streak','mode'])$('#share-'+key).textContent=shareData[key];
+  $('#share-date').textContent=shareData.day.replaceAll('-','. ');$('#share-date').dateTime=shareData.day;
+  $('#share-text').value=shareData.text;$('#share-fallback').hidden=true;$('#share-native').hidden=typeof navigator.share!=='function';$('#share-dialog').showModal();
 });
+async function copyShareRecord(){if(!shareData)return;try{if(!navigator.clipboard)throw new Error('Clipboard unavailable');await navigator.clipboard.writeText(shareData.text);$('#share-copy').textContent='복사했어요';setTimeout(()=>$('#share-copy').textContent='기록과 링크 복사',2200);}catch{$('#share-fallback').hidden=false;$('#share-text').focus();$('#share-text').select();}}
+$('#share-copy').addEventListener('click',copyShareRecord);
+$('#share-native').addEventListener('click',async()=>{if(!shareData)return;try{await navigator.share({title:shareData.title,text:shareData.text});}catch(error){if(error.name!=='AbortError')await copyShareRecord();}});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkDay();});
 window.addEventListener('storage',event=>{
   if(event.key===STORE&&event.newValue){try{const other=JSON.parse(event.newValue);for(const key of Object.keys(MODES))saved.best[key]=Math.max(Number(saved.best[key])||0,Number(other.best?.[key])||0);renderStats();}catch{}}
