@@ -10,3 +10,5 @@
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 
 .board{user-select:none;-webkit-user-select:none}
+
+@media(min-width:851px){.shell{max-width:900px}.site-header{height:80px}.intro{padding:24px 0 25px}.intro h1{font-size:50px}.intro h1 span{font-size:57px}.intro-note{margin:0;gap:15px}.play-layout{grid-template-columns:minmax(0,1fr) 272px;gap:44px;justify-content:normal}.mode-tabs{margin-bottom:16px}.score-row{min-height:69px;padding-bottom:16px;gap:23px}.side-column{gap:14px}.target-card{padding-top:22px}.target-tile{margin-top:20px;margin-bottom:18px}.daily-card{padding-top:19px;padding-bottom:19px}.tip-card{padding-top:10px}.how-strip p{margin-right:16px}.how-equation{gap:9px}}
