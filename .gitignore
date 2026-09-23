@@ -1,3 +1,12 @@
 node_modules/
 .DS_Store
 *.log
+
+public/
+.wrangler/
+wrangler.local.jsonc
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+!*.example

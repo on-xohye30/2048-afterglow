@@ -1,16 +1,19 @@
+// Local static preview only. It never serves secrets, backend code or repository files.
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-const root = path.dirname(fileURLToPath(import.meta.url));
-const types = {'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.svg':'image/svg+xml','.json':'application/json; charset=utf-8','.md':'text/plain; charset=utf-8'};
-const server = http.createServer(async (req,res) => {
+const root=path.dirname(fileURLToPath(import.meta.url));
+const allowed=new Set(['index.html','styles.css','app.js','engine.js','favicon.svg','league.js','league.css','league-game.js','privacy.html','assets/kakao-login.svg']);
+const types={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.svg':'image/svg+xml'};
+const server=http.createServer(async(req,res)=>{
   try {
-    const pathname = decodeURIComponent(new URL(req.url,'http://localhost').pathname);
-    const file = path.resolve(root,'.'+(pathname==='/'?'/index.html':pathname));
-    if (!file.startsWith(root+path.sep) || pathname.includes('/.git')) {res.writeHead(403);res.end();return;}
-    const body = await readFile(file);
-    res.writeHead(200,{'Content-Type':types[path.extname(file)]||'application/octet-stream','Cache-Control':'no-store'});res.end(body);
-  } catch {res.writeHead(404,{'Content-Type':'text/plain'});res.end('Not found');}
+    if(!['GET','HEAD'].includes(req.method)){res.writeHead(405);res.end();return;}
+    const pathname=decodeURIComponent(new URL(req.url,'http://localhost').pathname);
+    if(pathname==='/api/config'){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify({enabled:false,authConfigured:false}));return;}
+    const file=pathname==='/'?'index.html':pathname.slice(1);
+    if(!allowed.has(file)){res.writeHead(404);res.end('Not found');return;}
+    const body=await readFile(path.join(root,file));res.writeHead(200,{'Content-Type':types[path.extname(file)]||'application/octet-stream','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(req.method==='HEAD'?undefined:body);
+  }catch{res.writeHead(404);res.end('Not found');}
 });
-server.listen(4173,'127.0.0.1',()=>console.log('Afterglow ready: http://127.0.0.1:4173/'));
+server.listen(4173,'127.0.0.1',()=>console.log('Static preview: http://127.0.0.1:4173/ (friend server disabled)'));

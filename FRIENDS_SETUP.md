@@ -1,0 +1,58 @@
+# 친구 대결 운영과 배포
+
+실제 서비스: https://2048-afterglow.on-xohye30.workers.dev/
+
+## 구성
+
+- Cloudflare Workers + D1 + 같은 origin의 정적 게임 자산.
+- 카카오 API, OAuth, SDK, 카카오 친구 목록 접근을 사용하지 않습니다. 모바일의 기본 공유 메뉴 또는 카톡에 초대 링크 붙여넣기를 사용합니다.
+- 닉네임 기기 계정: 무작위 HttpOnly/Secure/SameSite 쿠키, DB에는 토큰 해시만 저장. 브라우저/기기가 바뀌거나 쿠키를 지우면 복구할 수 없습니다. 닉네임은 본인인증이 아니며 중복될 수 있습니다.
+- 친구방 최대 30명, 내가 만든 방 최대 5개. 초대 링크를 가진 사람은 참가할 수 있으므로 믿는 친구에게만 보내세요. 순위 조회는 참가자에게만 허용합니다.
+- 일간 순위: 일별 최고 점수. 주간 순위: KST 월요일부터 일별 최고 점수 합계.
+- 모든 친구 대결은 날짜별 동일 시드와 4×4 보드를 사용합니다. 이동 방향을 서버에서 재생해 점수를 계산하며 임의 점수 필드는 받지 않습니다. 최대 10,000수, 한국 시간 자정 전 제출. 되돌리기는 제공하지 않습니다.
+- **캐주얼 대결입니다.** 유효한 이동 검증은 자동 플레이·봇·반복 연습을 차단하거나 실제 사람의 신원을 확인하는 기능이 아닙니다.
+
+## 테스트와 빌드
+
+Node.js 22.13 이상이 필요합니다. Wrangler는 개발 의존성으로 버전을 고정합니다.
+
+~~~sh
+npm install
+npm test
+npm run build
+~~~
+
+46개 자동 테스트에는 두 사용자, 방 접근 제한, CSRF, 동의, 세션 연장·만료, 탈퇴·소유권 이전, 비활성 계정 정리, 점수 재생·위조·중복 제출, 기존 엔진 및 화면 연결 검사가 포함됩니다. 빌드는 공개 자산만 public/에 복사하며 서버 코드·테스트·배포 설정·자격 증명을 제외합니다.
+
+## 새 Cloudflare 계정에 배포
+
+1. 무료 Workers 플랜으로 시작할 수 있습니다. 무료 한도를 넘으면 기능이 일시적으로 제한될 수 있으며 유료 업그레이드는 별도 선택입니다.
+2. Cloudflare 계정과 이메일을 확인하고 Wrangler OAuth 또는 해당 계정의 Workers Scripts Edit + D1 Edit 토큰으로 인증합니다. API 토큰을 저장소나 프런트엔드에 넣지 마세요. 계정 토큰은 CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID 환경 변수로 전달합니다.
+3. wrangler.example.jsonc를 wrangler.local.jsonc로 복사합니다. 실제 D1 DB를 만들고 database_id를 넣습니다. local 설정은 Git에서 제외됩니다.
+
+~~~sh
+node node_modules/wrangler/bin/wrangler.js d1 create afterglow-friends --location=apac
+node node_modules/wrangler/bin/wrangler.js d1 migrations apply afterglow-friends --remote --config wrangler.local.jsonc
+npm run build
+node node_modules/wrangler/bin/wrangler.js deploy --config wrangler.local.jsonc
+~~~
+
+4. PUBLIC_ORIGIN을 배포 결과의 정확한 HTTPS origin으로 설정하고 다시 배포합니다. 별도의 소셜 앱 키는 필요 없습니다. 설정 전에는 참가 기능이 비활성화됩니다.
+5. 실제 주소에서 서로 다른 두 브라우저/계정으로 방 생성·초대·등록·순위·삭제를 확인합니다. 기존 싱글 플레이는 별도로 유지합니다.
+
+## 보관 및 운영
+
+세션은 90일, 마지막 이용 후 90일이 지난 계정은 정기 삭제합니다. 점수 90일, 시도 2일, 요청 제한 정보 최대 1일. 크론은 UTC 19:23 (다음 날 KST 04:23)에 실행하며 7개 쿼리의 트랜잭션으로 정리합니다. 비활성 방 주인이 있어도 활동 중인 친구에게 소유권을 넘깁니다.
+
+내 게임 데이터 삭제는 운영 DB에서 즉시 처리하고, D1 Free의 복구 백업은 최대 7일 남을 수 있습니다. APAC DB 위치는 한국 내 보관을 보장하지 않습니다. 자세한 사용자 안내는 privacy.html입니다.
+
+카카오 운영정책의 게임 웹 API 제한 때문에 기존 OAuth 개발 코드는 이 버전에서 제거했습니다. 일반 앱으로 위장하거나 앱 키로 제한을 우회하지 않습니다.
+
+## 실제 검증 결과 (2026-09-23)
+
+- Cloudflare 실제 DB에서 독립된 두 계정의 208점·16점이 일간/주간 순위에 함께 반영됐습니다. HTTP 클라이언트와 실제 브라우저를 함께 사용했습니다.
+- 브라우저 닉네임 생성, 링크 참가, 키보드 대결, 점수 등록, 서버 데이터 삭제 및 다른 탭의 진행 상태 삭제를 확인했습니다. 삭제 후 다른 탭에서 이동해도 예전 친구 대결 저장이 되살아나지 않았습니다.
+- 익명 순위 접근과 임의 점수 필드는 거절됐습니다. 검증용 계정과 방은 모두 삭제했습니다.
+- [미검증] Android/iOS 실기기 및 카카오톡 앱의 실제 공유 메뉴·전송. 별도 모바일 뷰포트 실행은 테스트 환경 제약으로 완료하지 못했습니다. 반응형 CSS와 입력 폭은 정적 검토했습니다.
+
+GitHub main의 Pages 배포는 싱글 플레이와 친구 서버 진입 버튼을 갱신합니다. Worker 변경은 위 Wrangler 명령으로 별도 배포합니다. 배포용 API 토큰이 만료되어도 이미 배포한 게임은 계속 동작합니다. 다른 주소로 이전할 때는 PUBLIC_ORIGIN과 league.js의 FRIENDS_ORIGIN도 함께 바꾸세요.

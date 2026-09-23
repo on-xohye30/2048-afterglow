@@ -1,0 +1,29 @@
+{
+  "name": "2048-afterglow",
+  "main": "backend/worker.mjs",
+  "compatibility_date": "2026-09-23",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": [
+      "/api/*"
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "afterglow-friends",
+      "database_id": "REPLACE_WITH_CREATED_D1_DATABASE_ID",
+      "migrations_dir": "backend/migrations"
+    }
+  ],
+  "vars": {
+    "PUBLIC_ORIGIN": "https://REPLACE_WITH_YOUR_DEPLOYED_HOST"
+  },
+  "triggers": {
+    "crons": [
+      "23 19 * * *"
+    ]
+  }
+}
