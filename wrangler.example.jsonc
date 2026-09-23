@@ -15,6 +15,7 @@
     "migrations_dir": "backend/migrations"
   }],
   "vars": {
+    "KAKAO_APPROVED_FOR_GAME": "false",
     "PUBLIC_ORIGIN": "https://REPLACE_WITH_YOUR_DEPLOYED_HOST"
   },
   "triggers": { "crons": ["23 19 * * *"] }

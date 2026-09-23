@@ -5,6 +5,7 @@ const INVITE_KEY = 'afterglow2048:pending-invite';
 const ROOM_ID = /^[A-Za-z0-9_-]{24,64}$/;
 const format = n => Number(n || 0).toLocaleString('ko-KR');
 const errorMessages = {
+  KAKAO_APPROVAL_REQUIRED:'게임 서비스는 카카오의 사전 이용 승인이 필요해요.',
   AUTH_REQUIRED:'카카오 로그인이 필요해요. 다시 연결해 주세요.', AUTH_NOT_CONFIGURED:'아직 카카오 개발자 앱이 연결되지 않았어요.',
   DATABASE_NOT_CONFIGURED:'친구방 저장 서버가 아직 연결되지 않았어요.', CONFIG_REQUIRED:'친구방 서버 설정이 필요해요.',
   MEMBERSHIP_REQUIRED:'이 방에 참가한 사람만 순위를 볼 수 있어요.', ROOM_NOT_FOUND:'초대받은 방을 찾을 수 없어요.',
@@ -70,7 +71,7 @@ export function initLeague(game) {
   async function open(){
     if(!dialog.open)dialog.showModal();$('#league-copy-box').hidden=true;$('#league-confirm').hidden=true;
     if(!config?.enabled){$('#league-login').hidden=true;message('친구 대결 서버가 아직 연결되지 않았어요. 혼자 플레이는 계속 이용할 수 있어요.',true);return;}
-    if(!config.authConfigured){$('#kakao-login-link').hidden=true;message('카카오 개발자 앱 연결이 필요해요. 아직 실제 로그인과 기록 공유는 활성화되지 않았어요.',true);return;}
+    if(!config.authConfigured){$('#kakao-login-link').hidden=true;message(config.kakaoApprovalRequired?'게임 서비스는 카카오의 사전 이용 승인이 필요해요. 아직 카카오 로그인과 공유 기능을 활성화하지 않았어요.':'카카오 개발자 앱 연결이 필요해요. 아직 실제 로그인과 기록 공유는 활성화되지 않았어요.',true);return;}
     message('친구방을 불러오는 중이에요…');try{await refresh();message('친구방 순위는 참가자에게만 보여요.');}catch(error){showError(error);}
   }
   async function copyInvite(){const url=inviteURL();try{await navigator.clipboard.writeText(url);message('초대 링크를 복사했어요. 카톡에 붙여넣어 보내세요.');}catch{$('#league-copy-text').value=url;$('#league-copy-box').hidden=false;$('#league-copy-text').focus();$('#league-copy-text').select();message('아래 링크를 직접 복사해 주세요.');}}

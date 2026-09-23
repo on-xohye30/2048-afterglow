@@ -39,7 +39,7 @@ function fixture() {
     }
     throw new Error('Unexpected provider request');
   }});
-  const env={DB:db,PUBLIC_ORIGIN:ORIGIN,KAKAO_REST_API_KEY:'test-only',KAKAO_CLIENT_SECRET:'test-only',ASSETS:{fetch:async()=>new Response('static asset')}};
+  const env={DB:db,PUBLIC_ORIGIN:ORIGIN,KAKAO_APPROVED_FOR_GAME:'true',KAKAO_REST_API_KEY:'test-only',KAKAO_CLIENT_SECRET:'test-only',ASSETS:{fetch:async()=>new Response('static asset')}};
   function client(){
     const jar=new Map();let csrf;
     const req=async(path,{method='GET',data,headers={},withCSRF=true}={})=>{
@@ -76,3 +76,5 @@ test('account deletion transfers owned room, removes personal data and logs out'
 test('logout invalidates the current session',async()=>{const f=await setup();assert.equal((await f.a.req('/api/logout',{method:'POST',data:{}})).status,200);assert.equal((await f.a.req('/api/me')).value.user,null);});
 test('room capacity trigger is enforced atomically and owned room limit is bounded',async()=>{const f=await setup();for(let i=1;i<30;i++){const uid='test-user-'+i;f.db.db.prepare('INSERT INTO users VALUES (?,?,?,?)').run(uid,''+(500+i),'테스트',0);f.db.db.prepare('INSERT INTO memberships VALUES (?,?,?)').run(f.room.id,uid,0);}const joined=await f.b.req('/api/rooms/'+f.room.id+'/join',{method:'POST',data:{}});assert.equal(joined.status,409);for(let i=0;i<4;i++)assert.equal((await f.a.req('/api/rooms',{method:'POST',data:{name:'새 방 '+i}})).status,200);assert.equal((await f.a.req('/api/rooms',{method:'POST',data:{name:'제한 초과'}})).status,409);});
 test('scheduled cleanup removes expired transient rows and old scores, not accounts',async()=>{const f=await setup();await run(f.a,f.room.id,4);f.advance(91*86400000);await f.worker.scheduled({},f.env);for(const table of ['sessions','runs','scores','oauth_states','rate_buckets'])assert.equal(f.db.db.prepare('SELECT COUNT(*) n FROM '+table).get().n,0);assert.equal(f.db.db.prepare('SELECT COUNT(*) n FROM users').get().n,2);});
+
+test('game policy gate stays closed even if API keys are configured',async()=>{const f=fixture();delete f.env.KAKAO_APPROVED_FOR_GAME;f.env.KAKAO_JS_KEY='public-test-key';const config=await f.worker.fetch(new Request(ORIGIN+'/api/config'),f.env);const result=await config.json();assert.equal(result.authConfigured,false);assert.equal(result.kakaoApprovalRequired,true);assert.equal(result.kakaoJavascriptKey,'');const login=await f.worker.fetch(new Request(ORIGIN+'/api/auth/kakao'),f.env);assert.equal(login.status,503);assert.equal((await login.json()).error.code,'KAKAO_APPROVAL_REQUIRED');});

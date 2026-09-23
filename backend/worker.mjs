@@ -48,7 +48,7 @@ function publicOrigin(env) {
   } catch { fail(503, 'CONFIG_REQUIRED', 'A valid HTTPS PUBLIC_ORIGIN is required.'); }
 }
 function authConfigured(env) {
-  try { publicOrigin(env); return Boolean(env.KAKAO_REST_API_KEY && env.KAKAO_CLIENT_SECRET && env.DB); }
+  try { publicOrigin(env); return Boolean(env.KAKAO_APPROVED_FOR_GAME === 'true' && env.KAKAO_REST_API_KEY && env.KAKAO_CLIENT_SECRET && env.DB); }
   catch { return false; }
 }
 const kstDay = time => new Date(time + KST).toISOString().slice(0, 10);
@@ -169,6 +169,7 @@ export function createWorker({ fetchImpl = globalThis.fetch, now = Date.now } = 
     return response.json();
   }
   async function oauth(request, env, url, callback) {
+    if (env.KAKAO_APPROVED_FOR_GAME !== 'true') fail(503, 'KAKAO_APPROVAL_REQUIRED', 'Game services require prior Kakao approval.');
     if (!authConfigured(env)) fail(503, 'AUTH_NOT_CONFIGURED', 'Kakao sign-in is not configured.');
     const origin = publicOrigin(env), db = env.DB;
     const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
@@ -230,7 +231,7 @@ export function createWorker({ fetchImpl = globalThis.fetch, now = Date.now } = 
       return env.ASSETS ? env.ASSETS.fetch(request) : new Response('Not found', { status: 404 });
     }
     if (p === '/api/config' && method === 'GET') return json({ enabled: true, authConfigured: authConfigured(env),
-      kakaoJavascriptKey: env.KAKAO_JS_KEY || '', maxRoomMembers: 30 });
+      kakaoApprovalRequired: env.KAKAO_APPROVED_FOR_GAME !== 'true', kakaoJavascriptKey: env.KAKAO_APPROVED_FOR_GAME === 'true' ? env.KAKAO_JS_KEY || '' : '', maxRoomMembers: 30 });
     if (!env.DB) fail(503, 'DATABASE_NOT_CONFIGURED', 'The league database is not configured.');
     const db = env.DB;
     const routes = [
