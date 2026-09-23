@@ -1,0 +1,11 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createRankedState, rankedAttempt, validRun } from './league-game.js';
+import { createBoard, createRng } from './engine.js';
+import { readFileSync } from 'node:fs';
+const run={id:'a'.repeat(24),roomId:'b'.repeat(24),userId:'c'.repeat(24),day:'2026-09-23',seed:12345,createdAt:1000};
+test('ranked game uses exact server seed and has no undo history',()=>{const state=createRankedState(run),rng=createRng(run.seed);assert.deepEqual(state.board,createBoard(4,rng));assert.equal(state.seed,rng.state);assert.deepEqual(state.history,[]);assert.deepEqual(state.trace,[]);assert.equal(state.submitted,false);});
+test('ranked run metadata is validated and copied',()=>{for(const bad of [{...run,id:'bad'},{...run,seed:-1},{...run,seed:2**32},{...run,userId:null},{...run,createdAt:-1}]){assert.equal(validRun(bad),false);assert.throws(()=>createRankedState(bad));}const state=createRankedState(run);state.run.id='x'.repeat(24);assert.notEqual(state.run.id,run.id);});
+test('score submissions contain a cloned move trace, not a client score',()=>{const state=createRankedState(run);state.trace.push('left','down');state.score=999999;const attempt=rankedAttempt(state);assert.equal(attempt.score,undefined);assert.deepEqual(attempt.moves,['left','down']);attempt.moves.push('up');assert.equal(state.trace.length,2);});
+test('malformed or overlong traces cannot be submitted by UI',()=>{const state=createRankedState(run);state.trace=['hack'];assert.equal(rankedAttempt(state),null);state.trace=Array(10001).fill('left');assert.equal(rankedAttempt(state),null);assert.equal(rankedAttempt(null),null);});
+test('league DOM hooks are present once and static-only secrets are absent',()=>{const html=readFileSync(new URL('./index.html',import.meta.url),'utf8');const source=readFileSync(new URL('./league.js',import.meta.url),'utf8');const ids=Array.from(html.matchAll(/\bid="([^"]+)"/g),m=>m[1]);assert.equal(new Set(ids).size,ids.length);for(const match of source.matchAll(/\$\('#([^']+)'\)/g))assert.ok(ids.includes(match[1]),'Missing ID: '+match[1]);assert.ok(ids.includes('mode-league'));assert.ok(ids.includes('ranked-banner'));assert.ok(!source.includes('KAKAO_CLIENT_SECRET'));assert.ok(!html.includes('KAKAO_CLIENT_SECRET'));});

@@ -1,0 +1,10 @@
+import { mkdir, copyFile, rm } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const root=path.dirname(fileURLToPath(import.meta.url));
+const target=path.join(root,'public');
+await rm(target,{recursive:true,force:true});
+await mkdir(path.join(target,'assets'),{recursive:true});
+const files=['index.html','styles.css','app.js','engine.js','favicon.svg','league.js','league.css','league-game.js','privacy.html','assets/kakao-login.svg'];
+for(const file of files)await copyFile(path.join(root,file),path.join(target,file));
+console.log('Built '+files.length+' public assets. Backend, tests and local settings are excluded.');
