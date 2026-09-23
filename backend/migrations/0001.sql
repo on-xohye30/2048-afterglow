@@ -2,10 +2,12 @@ PRAGMA foreign_keys = ON;
 
 CREATE TABLE users (
   id TEXT PRIMARY KEY,
-  kakao_id TEXT NOT NULL UNIQUE,
+  identity_key TEXT NOT NULL UNIQUE,
   nickname TEXT NOT NULL,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL
 );
+CREATE INDEX users_last_seen ON users(last_seen_at);
 CREATE TABLE sessions (
   token_hash TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -14,11 +16,6 @@ CREATE TABLE sessions (
 );
 CREATE INDEX sessions_expiry ON sessions(expires_at);
 CREATE INDEX sessions_user ON sessions(user_id);
-CREATE TABLE oauth_states (
-  state_hash TEXT PRIMARY KEY,
-  expires_at INTEGER NOT NULL
-);
-CREATE INDEX oauth_expiry ON oauth_states(expires_at);
 -- One rolling fixed-window bucket per hashed subject/scope, not per request.
 CREATE TABLE rate_buckets (
   key TEXT PRIMARY KEY,

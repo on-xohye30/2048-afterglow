@@ -1,5 +1,5 @@
 import { slide, canMove, spawn, createBoard, createRng, maxTile } from './engine.js';
-import { initLeague } from './league.js?v=2.0.0';
+import { initLeague } from './league.js?v=2.0.1';
 import { createRankedState, rankedAttempt } from './league-game.js';
 
 const $ = selector => document.querySelector(selector);
@@ -141,16 +141,19 @@ $('#share-btn').addEventListener('click',async()=>{
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkDay();});
 window.addEventListener('storage',event=>{
   if(event.key===STORE&&event.newValue){try{const other=JSON.parse(event.newValue);for(const key of Object.keys(MODES))saved.best[key]=Math.max(Number(saved.best[key])||0,Number(other.best?.[key])||0);renderStats();}catch{}}
+  if(event.key===GAME_PREFIX+'league'&&event.newValue===null)clearLeagueIdentity();
   if(event.key===GAME_PREFIX+gameKey()&&event.newValue){try{const incoming=JSON.parse(event.newValue);if(validState(incoming,MODES[mode].size)&&JSON.stringify(incoming)!==JSON.stringify(state)){generation++;busy=false;loadMode(false);toast('다른 탭의 최신 진행을 이어받았어요.');}}catch{}}
 });
 applyTheme();applySound();loadMode();
 if(!storageOK)toast('이 브라우저에서는 기록 저장이 제한될 수 있어요.');
 
+function clearLeagueIdentity(){generation++;busy=false;saved.best.league=0;if(mode==='league'){mode='classic';pinnedDay=null;day=dateInSeoul();loadMode();}else persist(false);try{localStorage.removeItem(GAME_PREFIX+'league');}catch{}}
 function storedLeagueState(){try{return mode==='league'?state:JSON.parse(localStorage.getItem(GAME_PREFIX+'league')||'null');}catch{return null;}}
 function useLeagueState(next){generation++;busy=false;if(mode!=='league')persist();mode='league';pinnedDay=null;day=dateInSeoul();state=next;renderAll();persist();$('#board').focus({preventScroll:true});}
 $('#ranked-open').addEventListener('click',()=>document.dispatchEvent(new CustomEvent('afterglow:league-open')));
 initLeague({
   toast,
+  clearIdentity:clearLeagueIdentity,
   getAttempt:()=>rankedAttempt(storedLeagueState()),
   startRun:run=>useLeagueState(createRankedState(run)),
   resumeRun:()=>{const stored=storedLeagueState();if(validState(stored,4)&&rankedAttempt(stored))useLeagueState(stored);else toast('저장된 대결을 찾을 수 없어요. 새 대결을 시작해 주세요.');},

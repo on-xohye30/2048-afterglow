@@ -1,16 +1,14 @@
 import { slide, spawn, createBoard, createRng, maxTile } from '../engine.js';
 
-// Replay-validated, not bot-proof. Kakao tokens are used once and never persisted.
-// Retention: OAuth 10m, sessions 14d, rate windows <=10m; scheduled cleanup removes
-// expired credentials/buckets, runs older than 2d, scores older than 90d. Accounts
-// persist until deletion. Leaving a room removes that member's scores and runs.
+// Replay-validated, not bot-proof. Device-bound nickname identities, no social provider API.
+// Retention: device sessions 90d (renewed on visits), runs 2d, scores 90d.
+// Accounts inactive for 90d are removed. Leaving a room removes its personal records.
 const DAY = 86400000;
 const KST = 9 * 3600000;
 const SESSION = '__Host-afterglow_session';
-const STATE = '__Host-afterglow_oauth';
 const ID = /^[A-Za-z0-9_-]{24,64}$/;
 const DIRS = new Set(['left', 'right', 'up', 'down']);
-const CSP = "default-src 'self'; script-src 'self' https://t1.kakaocdn.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://*.kakao.com https://*.kakao.co.kr; frame-src https://*.kakao.com; object-src 'none'; base-uri 'none'; form-action 'self' https://*.kakao.com; frame-ancestors 'none'";
+const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 class HttpError extends Error {
   constructor(status, code, message) { super(message); this.status = status; this.code = code; }
 }
@@ -47,10 +45,7 @@ function publicOrigin(env) {
     return url.origin;
   } catch { fail(503, 'CONFIG_REQUIRED', 'A valid HTTPS PUBLIC_ORIGIN is required.'); }
 }
-function authConfigured(env) {
-  try { publicOrigin(env); return Boolean(env.KAKAO_APPROVED_FOR_GAME === 'true' && env.KAKAO_REST_API_KEY && env.KAKAO_CLIENT_SECRET && env.DB); }
-  catch { return false; }
-}
+function authConfigured(env) {try {publicOrigin(env);return Boolean(env.DB);}catch{return false;}}
 const kstDay = time => new Date(time + KST).toISOString().slice(0, 10);
 function monday(day) {
   const d = new Date(day + 'T00:00:00Z');
@@ -126,8 +121,8 @@ function secure(response, api) {
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
-/** Inject only HTTP/time for tests; there is deliberately no authentication bypass. */
-export function createWorker({ fetchImpl = globalThis.fetch, now = Date.now } = {}) {
+/** Time injection is for tests. Production has no hidden login bypass. */
+export function createWorker({ now = Date.now } = {}) {
   async function limit(db, scope, subject, maximum, window = 600000) {
     const time = now();
     const key = scope + ':' + await hash(subject);
@@ -141,16 +136,17 @@ export function createWorker({ fetchImpl = globalThis.fetch, now = Date.now } = 
   async function session(request, db, required = true) {
     const token = cookies(request)[SESSION];
     if (!token || !ID.test(token)) {
-      if (required) fail(401, 'AUTH_REQUIRED', 'Sign in with Kakao first.');
+      if (required) fail(401, 'AUTH_REQUIRED', 'Choose a nickname first.');
       return null;
     }
     const tokenHash = await hash(token);
-    const row = await stmt(db, `SELECT s.user_id AS id,u.nickname FROM sessions s
+    const row = await stmt(db, `SELECT s.user_id AS id,u.nickname,s.expires_at AS expiresAt FROM sessions s
       JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?`, tokenHash, now()).first();
     if (!row) {
-      if (required) fail(401, 'AUTH_REQUIRED', 'Your session has expired. Sign in again.');
+      if (required) fail(401, 'AUTH_REQUIRED', 'Your session has expired. Connect with a nickname again.');
       return null;
     }
+    await stmt(db, 'UPDATE users SET last_seen_at=? WHERE id=? AND last_seen_at<?', now(), row.id, now()-3600000).run();
     return { ...row, tokenHash, csrfToken: await hash('csrf:' + token) };
   }
   async function room(db, id) {
@@ -163,66 +159,12 @@ export function createWorker({ fetchImpl = globalThis.fetch, now = Date.now } = 
     const row = await stmt(db, 'SELECT 1 AS ok FROM memberships WHERE room_id=? AND user_id=?', roomId, userId).first();
     if (!row) fail(403, 'MEMBERSHIP_REQUIRED', 'Only room members can access this.');
   }
-  async function kakaoJSON(url, options) {
-    const response = await fetchImpl(url, { ...options, redirect: 'error', signal: AbortSignal.timeout(10000) });
-    if (!response.ok) throw new Error('Kakao request failed');
-    return response.json();
-  }
-  async function oauth(request, env, url, callback) {
-    if (env.KAKAO_APPROVED_FOR_GAME !== 'true') fail(503, 'KAKAO_APPROVAL_REQUIRED', 'Game services require prior Kakao approval.');
-    if (!authConfigured(env)) fail(503, 'AUTH_NOT_CONFIGURED', 'Kakao sign-in is not configured.');
-    const origin = publicOrigin(env), db = env.DB;
-    const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
-    await limit(db, callback ? 'auth-callback' : 'auth-start', ip, callback ? 40 : 20);
-    const redirectUri = origin + '/api/auth/kakao/callback';
-    if (!callback) {
-      const state = random();
-      await stmt(db, 'DELETE FROM oauth_states WHERE expires_at <= ?', now()).run();
-      const inserted = await stmt(db, `INSERT INTO oauth_states(state_hash,expires_at)
-        SELECT ?,? WHERE (SELECT COUNT(*) FROM oauth_states)<10000 RETURNING state_hash`, await hash(state), now() + 600000).first();
-      if (!inserted) fail(429, 'RATE_LIMITED', 'Please try again later.');
-      const target = new URL('https://kauth.kakao.com/oauth/authorize');
-      target.search = new URLSearchParams({ client_id: env.KAKAO_REST_API_KEY, redirect_uri: redirectUri,
-        response_type: 'code', scope: 'profile_nickname', state }).toString();
-      return new Response(null, { status: 302, headers: { Location: target.href, 'Set-Cookie': cookie(STATE, state, 600) } });
-    }
-    const headers = new Headers({ Location: origin + '/?league=1' });
-    headers.append('Set-Cookie', cookie(STATE, '', 0));
-    try {
-      const state = url.searchParams.get('state'), saved = cookies(request)[STATE];
-      if (!state || !ID.test(state) || !equal(state, saved)) throw new Error();
-      const consumed = await stmt(db, 'DELETE FROM oauth_states WHERE state_hash=? AND expires_at>? RETURNING state_hash', await hash(state), now()).first();
-      if (!consumed || url.searchParams.has('error')) throw new Error();
-      const code = url.searchParams.get('code');
-      if (!code || code.length > 4096) throw new Error();
-      const token = await kakaoJSON('https://kauth.kakao.com/oauth/token', {
-        method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ grant_type: 'authorization_code', client_id: env.KAKAO_REST_API_KEY,
-          client_secret: env.KAKAO_CLIENT_SECRET, redirect_uri: redirectUri, code }),
-      });
-      if (typeof token.access_token !== 'string' || !token.access_token || token.access_token.length > 8192) throw new Error();
-      const profile = await kakaoJSON('https://kapi.kakao.com/v2/user/me', {
-        headers: { Authorization: 'Bearer ' + token.access_token },
-      });
-      // Kakao IDs must remain exact; refuse unsafe JSON numeric IDs instead of rounding.
-      if (!(typeof profile.id === 'string' && /^\d{1,32}$/.test(profile.id)) &&
-          !(Number.isSafeInteger(profile.id) && profile.id > 0)) throw new Error();
-      let nickname = 'Kakao player';
-      try { nickname = text(profile.kakao_account?.profile?.nickname ?? profile.properties?.nickname, 2, 16, 'Nickname'); } catch { /* Safe minimal fallback. */ }
-      const userId = random(18), opaque = random();
-      const result = await db.batch([
-        stmt(db, `INSERT INTO users(id,kakao_id,nickname,created_at) VALUES (?,?,?,?)
-          ON CONFLICT(kakao_id) DO NOTHING`, userId, String(profile.id), nickname, now()),
-        stmt(db, `INSERT INTO sessions(token_hash,user_id,created_at,expires_at)
-          SELECT ?,id,?,? FROM users WHERE kakao_id=?`, await hash(opaque), now(), now() + 14 * DAY, String(profile.id)),
-      ]);
-      if (!result[1]?.meta?.changes) throw new Error();
-      headers.append('Set-Cookie', cookie(SESSION, opaque, 14 * 86400));
-    } catch {
-      // Never expose authorization codes, provider payloads, IDs or access tokens.
-      headers.set('Location', origin + '/?league=1&authError=oauth_failed');
-    }
-    return new Response(null, { status: 302, headers });
+  async function deleteAccount(db,userId){
+    await db.batch([
+      stmt(db, 'DELETE FROM rooms WHERE owner_id=? AND NOT EXISTS (SELECT 1 FROM memberships WHERE room_id=rooms.id AND user_id<>?)',userId,userId),
+      stmt(db, 'UPDATE rooms SET owner_id=(SELECT m.user_id FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.room_id=rooms.id AND m.user_id<>? ORDER BY u.last_seen_at DESC,m.joined_at,m.user_id LIMIT 1) WHERE owner_id=?',userId,userId),
+      stmt(db, 'DELETE FROM users WHERE id=?',userId),
+    ]);
   }
   async function route(request, env) {
     const url = new URL(request.url), p = url.pathname, method = request.method;
@@ -231,12 +173,12 @@ export function createWorker({ fetchImpl = globalThis.fetch, now = Date.now } = 
       return env.ASSETS ? env.ASSETS.fetch(request) : new Response('Not found', { status: 404 });
     }
     if (p === '/api/config' && method === 'GET') return json({ enabled: true, authConfigured: authConfigured(env),
-      kakaoApprovalRequired: env.KAKAO_APPROVED_FOR_GAME !== 'true', kakaoJavascriptKey: env.KAKAO_APPROVED_FOR_GAME === 'true' ? env.KAKAO_JS_KEY || '' : '', maxRoomMembers: 30 });
+      authMode:'device-nickname', sessionDays:90, maxRoomMembers:30 });
     if (!env.DB) fail(503, 'DATABASE_NOT_CONFIGURED', 'The league database is not configured.');
     const db = env.DB;
     const routes = [
       [/^\/api\/config$/, ['GET']], [/^\/api\/me$/, ['GET', 'PATCH', 'DELETE']],
-      [/^\/api\/auth\/kakao(?:\/callback)?$/, ['GET']], [/^\/api\/logout$/, ['POST']],
+      [/^\/api\/auth\/nickname$/, ['POST']], [/^\/api\/logout$/, ['POST']],
       [/^\/api\/rooms$/, ['POST']], [/^\/api\/invites\/[A-Za-z0-9_-]+$/, ['GET']],
       [/^\/api\/rooms\/[A-Za-z0-9_-]+$/, ['GET']],
       [/^\/api\/rooms\/[A-Za-z0-9_-]+\/(?:join|leave|runs)$/, ['POST']],
@@ -245,13 +187,25 @@ export function createWorker({ fetchImpl = globalThis.fetch, now = Date.now } = 
     const matched = routes.find(([pattern]) => pattern.test(p));
     if (!matched) fail(404, 'NOT_FOUND', 'Endpoint not found.');
     if (!matched[1].includes(method)) fail(405, 'METHOD_NOT_ALLOWED', 'Method not allowed.');
-    if (p.startsWith('/api/auth/kakao')) return oauth(request, env, url, p.endsWith('/callback'));
     const mutation = !['GET', 'HEAD', 'OPTIONS'].includes(method);
     if (mutation) {
       const origin = publicOrigin(env);
       if (url.origin !== origin || request.headers.get('Origin') !== origin ||
           ['cross-site', 'same-site'].includes(request.headers.get('Sec-Fetch-Site')))
         fail(403, 'ORIGIN_REJECTED', 'Use the same-origin app to make changes.');
+    }
+    if (p === '/api/auth/nickname') {
+      if (await session(request,db,false)) fail(409,'ALREADY_CONNECTED','This device already has an identity.');
+      const ip=request.headers.get('CF-Connecting-IP')||'unknown';
+      await limit(db,'nickname-start',ip,30,600000);await limit(db,'nickname-daily',ip,100,DAY);
+      const input=await body(request,['nickname','consent']);
+      if(input.consent!==true)fail(400,'CONSENT_REQUIRED','Consent is required.');
+      const nickname=text(input.nickname,2,16,'Nickname'),userId=random(18),opaque=random(),time=now();
+      await db.batch([
+        stmt(db,'INSERT INTO users(id,identity_key,nickname,created_at,last_seen_at) VALUES (?,?,?,?,?)',userId,'device:'+random(18),nickname,time,time),
+        stmt(db,'INSERT INTO sessions(token_hash,user_id,created_at,expires_at) VALUES (?,?,?,?)',await hash(opaque),userId,time,time+90*DAY),
+      ]);
+      return json({user:{id:userId,nickname}},201,{'Set-Cookie':cookie(SESSION,opaque,90*86400)});
     }
     if (p.startsWith('/api/invites/')) {
       await limit(db, 'invite', request.headers.get('CF-Connecting-IP') || 'unknown', 120, 60000);
@@ -269,7 +223,9 @@ export function createWorker({ fetchImpl = globalThis.fetch, now = Date.now } = 
         const list = await stmt(db, `SELECT r.id,r.name,r.owner_id AS ownerId,
           (SELECT COUNT(*) FROM memberships WHERE room_id=r.id) AS memberCount
           FROM memberships m JOIN rooms r ON r.id=m.room_id WHERE m.user_id=? ORDER BY r.created_at,r.id`, user.id).all();
-        return json({ user: { id: user.id, nickname: user.nickname }, csrfToken: user.csrfToken, rooms: list.results });
+        const visitTime=now();
+        await db.batch([stmt(db,'UPDATE sessions SET expires_at=? WHERE token_hash=?',visitTime+90*DAY,user.tokenHash),stmt(db,'UPDATE users SET last_seen_at=? WHERE id=?',visitTime,user.id)]);
+        return json({ user: { id: user.id, nickname: user.nickname }, csrfToken: user.csrfToken, rooms: list.results },200,{'Set-Cookie':cookie(SESSION,cookies(request)[SESSION],90*86400)});
       }
       if (method === 'PATCH') {
         const input = await body(request, ['nickname']);
@@ -278,13 +234,7 @@ export function createWorker({ fetchImpl = globalThis.fetch, now = Date.now } = 
         return json({ user: { id: user.id, nickname } });
       }
       await noBody(request);
-      await db.batch([
-        stmt(db, `DELETE FROM rooms WHERE owner_id=? AND NOT EXISTS
-          (SELECT 1 FROM memberships WHERE room_id=rooms.id AND user_id<>?)`, user.id, user.id),
-        stmt(db, `UPDATE rooms SET owner_id=(SELECT user_id FROM memberships
-          WHERE room_id=rooms.id AND user_id<>? ORDER BY joined_at,user_id LIMIT 1) WHERE owner_id=?`, user.id, user.id),
-        stmt(db, 'DELETE FROM users WHERE id=?', user.id),
-      ]);
+      await deleteAccount(db,user.id);
       return json({ ok: true }, 200, { 'Set-Cookie': cookie(SESSION, '', 0) });
     }
     if (p === '/api/logout') {
@@ -389,11 +339,13 @@ export function createWorker({ fetchImpl = globalThis.fetch, now = Date.now } = 
       if (!env.DB) return;
       const time = now();
       await env.DB.batch([
-        stmt(env.DB, 'DELETE FROM oauth_states WHERE expires_at<=?', time),
         stmt(env.DB, 'DELETE FROM sessions WHERE expires_at<=?', time),
         stmt(env.DB, 'DELETE FROM rate_buckets WHERE expires_at<=?', time),
         stmt(env.DB, 'DELETE FROM runs WHERE created_at<?', time - 2 * DAY),
         stmt(env.DB, 'DELETE FROM scores WHERE day<?', kstDay(time - 90 * DAY)),
+        stmt(env.DB, 'DELETE FROM rooms WHERE owner_id IN (SELECT id FROM users WHERE last_seen_at<?) AND NOT EXISTS (SELECT 1 FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.room_id=rooms.id AND u.last_seen_at>=?)',time-90*DAY,time-90*DAY),
+        stmt(env.DB, 'UPDATE rooms SET owner_id=(SELECT m.user_id FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.room_id=rooms.id AND u.last_seen_at>=? ORDER BY m.joined_at,m.user_id LIMIT 1) WHERE owner_id IN (SELECT id FROM users WHERE last_seen_at<?)',time-90*DAY,time-90*DAY),
+        stmt(env.DB, 'DELETE FROM users WHERE last_seen_at<?',time-90*DAY),
       ]);
     },
   };

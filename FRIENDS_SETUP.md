@@ -1,111 +1,58 @@
-# 친구 대결 연동 가이드
+# 친구 대결 운영과 배포
 
-## 중요: 카카오 게임 서비스 제한
+실제 서비스: https://2048-afterglow.on-xohye30.workers.dev/
 
-2026-09-23 확인한 [카카오 운영정책 제3조](https://developers.kakao.com/terms/latest/site-policies#restricted-category)는 **게임 애플리케이션/웹을 이용 제한 대상**으로 명시합니다. 카카오 공식 답변은 게임 API 사용을 카카오게임즈에 문의하도록 안내합니다. **일반 앱으로 허위 분류하거나 정책 위반이 없다는 항목을 체크해 등록하지 마세요.** 이 작업에서는 작성하던 앱 생성 폼을 취소했고 게임용 앱이나 키를 발급하지 않았습니다.
+## 구성
 
-현재 Kakao API 기능은 기본적으로 차단되어 있습니다. 실제 이용 허용을 확인한 뒤에만 서버 환경에 `KAKAO_APPROVED_FOR_GAME=true`를 설정할 수 있습니다. 이는 권한을 우회하거나 자동으로 승인을 얻는 설정이 아닙니다. 키만 넣어서는 로그인/SDK 공유가 활성화되지 않습니다.
+- Cloudflare Workers + D1 + 같은 origin의 정적 게임 자산.
+- 카카오 API, OAuth, SDK, 카카오 친구 목록 접근을 사용하지 않습니다. 모바일의 기본 공유 메뉴 또는 카톡에 초대 링크 붙여넣기를 사용합니다.
+- 닉네임 기기 계정: 무작위 HttpOnly/Secure/SameSite 쿠키, DB에는 토큰 해시만 저장. 브라우저/기기가 바뀌거나 쿠키를 지우면 복구할 수 없습니다. 닉네임은 본인인증이 아니며 중복될 수 있습니다.
+- 친구방 최대 30명, 내가 만든 방 최대 5개. 초대 링크를 가진 사람은 참가할 수 있으므로 믿는 친구에게만 보내세요. 순위 조회는 참가자에게만 허용합니다.
+- 일간 순위: 일별 최고 점수. 주간 순위: KST 월요일부터 일별 최고 점수 합계.
+- 모든 친구 대결은 날짜별 동일 시드와 4×4 보드를 사용합니다. 이동 방향을 서버에서 재생해 점수를 계산하며 임의 점수 필드는 받지 않습니다. 최대 10,000수, 한국 시간 자정 전 제출. 되돌리기는 제공하지 않습니다.
+- **캐주얼 대결입니다.** 유효한 이동 검증은 자동 플레이·봇·반복 연습을 차단하거나 실제 사람의 신원을 확인하는 기능이 아닙니다.
 
-권장 대안: **카카오 API 없이 닉네임 기반 친구방 + 초대 링크를 카톡에 직접 공유**. 이 대안의 계정 방식을 결정한 뒤 별도 구현/검증해야 하며 현재 브랜치에 완성된 것으로 간주하지 않습니다.
+## 테스트와 빌드
 
-## 현재 상태
+Node.js 22.13 이상이 필요합니다. Wrangler는 개발 의존성으로 버전을 고정합니다.
 
-- 기존 GitHub Pages 싱글 플레이는 `main`에 그대로 유지합니다.
-- 이 브랜치 `feat/friends-league`는 카카오 로그인, 초대형 비공개 친구방, 일간/주간 순위, 서버 점수 검증을 구현한 개발 버전입니다.
-- **실제 카카오 로그인, 카카오톡 메시지 전송, Cloudflare 배포는 계정 연결 전에는 완료된 것으로 표시하지 않습니다.**
-- 카카오 개발자 계정과 Cloudflare 배포 계정 인증이 필요합니다. API 키나 비밀번호를 채팅/이슈/커밋에 붙여넣지 마세요.
-
-## 사용 흐름
-
-1. 카카오 로그인: 닉네임만 동의. 친구 목록/연락처 권한은 요청하지 않습니다.
-2. 방 만들기 또는 초대 링크로 참가. 방은 최대 30명, 직접 만드는 방은 최대 5개.
-3. 카카오톡 공유 또는 링크 복사로 친구 초대. 실제 전송 대상은 사용자가 선택합니다.
-4. 같은 KST 날짜에는 모두 같은 4×4 퍼즐. 되돌리기 없음.
-5. 친구방에서 **현재 기록 등록**을 눌러 시도를 종료. 서버가 이동 기록을 재생해 점수를 계산합니다.
-6. 일간은 각자의 최고 점수, 주간은 월요일부터 일별 최고 점수의 합. 방 참가자만 순위 조회. 열린 순위표는 20초마다 갱신.
-
-카카오톡 친구 전체 자동 검색을 사용하는 구조가 아닙니다. 해당 API는 별도 권한 신청과 각 친구의 앱 연결/동의가 필요하므로 초대형 방을 사용합니다.
-
-## 로컬 코드 테스트
-
-Node.js 22.13 이상(내장 SQLite 사용). 외부 패키지 설치 없이:
-
-```sh
+~~~sh
+npm install
 npm test
 npm run build
-npm start
-```
+~~~
 
-`npm start`는 기존 정적 서버입니다. 서버 API가 없으면 친구 진입 버튼을 숨기며 기존 게임은 작동합니다. 테스트의 카카오 API는 고립된 테스트 코드에서만 모의 처리합니다. 운영 서버에는 임시 로그인/게스트 인증 우회 경로가 없습니다.
+46개 자동 테스트에는 두 사용자, 방 접근 제한, CSRF, 동의, 세션 연장·만료, 탈퇴·소유권 이전, 비활성 계정 정리, 점수 재생·위조·중복 제출, 기존 엔진 및 화면 연결 검사가 포함됩니다. 빌드는 공개 자산만 public/에 복사하며 서버 코드·테스트·배포 설정·자격 증명을 제외합니다.
 
-## Cloudflare 연결
+## 새 Cloudflare 계정에 배포
 
-1. 본인 Cloudflare 계정으로 Wrangler를 인증합니다. 유료 플랜이나 유료 사용량을 임의 활성화하지 않습니다.
-2. 계정의 최신 Workers/D1 무료 한도와 CPU 한도를 확인합니다. 실제 배포 후 긴 게임 이동 기록의 재생 시간도 확인해야 하며, 무료 한도에서 안정 동작한다고 미리 보장하지 않습니다.
+1. 무료 Workers 플랜으로 시작할 수 있습니다. 무료 한도를 넘으면 기능이 일시적으로 제한될 수 있으며 유료 업그레이드는 별도 선택입니다.
+2. Cloudflare 계정과 이메일을 확인하고 Wrangler OAuth 또는 해당 계정의 Workers Scripts Edit + D1 Edit 토큰으로 인증합니다. API 토큰을 저장소나 프런트엔드에 넣지 마세요. 계정 토큰은 CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID 환경 변수로 전달합니다.
+3. wrangler.example.jsonc를 wrangler.local.jsonc로 복사합니다. 실제 D1 DB를 만들고 database_id를 넣습니다. local 설정은 Git에서 제외됩니다.
 
-```sh
-npx wrangler login
-npx wrangler d1 create afterglow-league
-```
-
-3. `wrangler.example.jsonc`를 `wrangler.local.jsonc`로 복사합니다.
-4. 실제 생성된 D1 `database_id`와 실제 서비스 `PUBLIC_ORIGIN`을 입력합니다. `PUBLIC_ORIGIN`은 경로 없는 HTTPS origin입니다. 로컬 설정 파일은 Git에서 제외됩니다.
-5. 공개 파일만 빌드하고 DB 마이그레이션을 적용한 뒤 배포합니다.
-
-```sh
+~~~sh
+node node_modules/wrangler/bin/wrangler.js d1 create afterglow-friends --location=apac
+node node_modules/wrangler/bin/wrangler.js d1 migrations apply afterglow-friends --remote --config wrangler.local.jsonc
 npm run build
-npx wrangler d1 migrations apply afterglow-league --remote --config wrangler.local.jsonc
-npm run deploy:league
-```
+node node_modules/wrangler/bin/wrangler.js deploy --config wrangler.local.jsonc
+~~~
 
-Workers가 출력한 주소와 `PUBLIC_ORIGIN`이 다르면 실제 주소로 수정하고 다시 배포합니다. GitHub Pages는 서버/API/공유 DB를 실행할 수 없으므로, 친구 기능은 게임과 API를 같은 Cloudflare origin에서 제공해야 합니다. 기존 Pages 주소를 새 서버로 옮기는 작업은 실제 배포 검증 후 별도로 수행합니다.
+4. PUBLIC_ORIGIN을 배포 결과의 정확한 HTTPS origin으로 설정하고 다시 배포합니다. 별도의 소셜 앱 키는 필요 없습니다. 설정 전에는 참가 기능이 비활성화됩니다.
+5. 실제 주소에서 서로 다른 두 브라우저/계정으로 방 생성·초대·등록·순위·삭제를 확인합니다. 기존 싱글 플레이는 별도로 유지합니다.
 
-## 카카오 개발자 앱 설정 (게임 이용 승인 확인 후에만)
+## 보관 및 운영
 
-공식 콘솔: https://developers.kakao.com/console/app
+세션은 90일, 마지막 이용 후 90일이 지난 계정은 정기 삭제합니다. 점수 90일, 시도 2일, 요청 제한 정보 최대 1일. 크론은 UTC 19:23 (다음 날 KST 04:23)에 실행하며 7개 쿼리의 트랜잭션으로 정리합니다. 비활성 방 주인이 있어도 활동 중인 친구에게 소유권을 넘깁니다.
 
-- 이 게임 전용 앱 생성 또는 적합한 기존 앱 선택. 기존 타 서비스의 설정을 덮어쓰지 않습니다.
-- 카카오 로그인 사용 설정 ON.
-- REST API 키의 리다이렉트 URI에 `실제 PUBLIC_ORIGIN/api/auth/kakao/callback` 등록.
-- 닉네임(`profile_nickname`) 동의항목 설정. 이메일/전화번호/친구 목록은 요청하지 않음.
-- JavaScript SDK 도메인과 제품 링크 웹 도메인에 실제 `PUBLIC_ORIGIN` 등록.
-- 실제 서비스의 개인정보 안내 URL을 등록하고 운영자 정보와 처리 지역에 맞게 `privacy.html`을 검토·보완.
+내 게임 데이터 삭제는 운영 DB에서 즉시 처리하고, D1 Free의 복구 백업은 최대 7일 남을 수 있습니다. APAC DB 위치는 한국 내 보관을 보장하지 않습니다. 자세한 사용자 안내는 privacy.html입니다.
 
-다음 값은 Cloudflare Secret으로 입력합니다. 저장소나 브라우저 JavaScript에 REST 키/클라이언트 시크릿을 넣지 않습니다.
+카카오 운영정책의 게임 웹 API 제한 때문에 기존 OAuth 개발 코드는 이 버전에서 제거했습니다. 일반 앱으로 위장하거나 앱 키로 제한을 우회하지 않습니다.
 
-```sh
-npx wrangler secret put KAKAO_REST_API_KEY --config wrangler.local.jsonc
-npx wrangler secret put KAKAO_CLIENT_SECRET --config wrangler.local.jsonc
-npx wrangler secret put KAKAO_JS_KEY --config wrangler.local.jsonc
-```
+## 실제 검증 결과 (2026-09-23)
 
-`KAKAO_JS_KEY`는 Kakao SDK 초기화를 위해 `/api/config`를 통해 브라우저에 전달되는 공개용 JavaScript 키입니다. REST 키 및 클라이언트 시크릿은 전송하지 않습니다. JS 키가 없으면 카카오톡 SDK 버튼 대신 링크 복사/지원 기기의 공유 메뉴가 제공됩니다. 로그인용 키가 없으면 실제 로그인 버튼을 활성화하지 않습니다.
+- Cloudflare 실제 DB에서 독립된 두 계정의 208점·16점이 일간/주간 순위에 함께 반영됐습니다. HTTP 클라이언트와 실제 브라우저를 함께 사용했습니다.
+- 브라우저 닉네임 생성, 링크 참가, 키보드 대결, 점수 등록, 서버 데이터 삭제 및 다른 탭의 진행 상태 삭제를 확인했습니다. 삭제 후 다른 탭에서 이동해도 예전 친구 대결 저장이 되살아나지 않았습니다.
+- 익명 순위 접근과 임의 점수 필드는 거절됐습니다. 검증용 계정과 방은 모두 삭제했습니다.
+- [미검증] Android/iOS 실기기 및 카카오톡 앱의 실제 공유 메뉴·전송. 별도 모바일 뷰포트 실행은 테스트 환경 제약으로 완료하지 못했습니다. 반응형 CSS와 입력 폭은 정적 검토했습니다.
 
-## 공개 전 확인
-
-- [ ] 실제 카카오 계정 2개로 로그인/로그아웃/만료/재로그인 검증
-- [ ] PC와 휴대폰 카카오톡에서 초대 메시지 선택, 링크 열기, 방 참가 검증
-- [ ] 다른 계정의 기록과 주간 합계가 표시되는지 검증
-- [ ] 같은 날짜 퍼즐, KST 자정 만료, 기록 재등록 차단 검증
-- [ ] 긴 게임 기록 제출의 CPU 시간과 무료 사용 한도 확인
-- [ ] DB 정기 정리 작업, 데이터 삭제, 백업/복구 및 운영 연락처 확인
-- [ ] 개인정보 위탁·국외 처리 관련 실제 고지 확정
-- [ ] 기존 Pages 플레이/저장 데이터 이전 방식 공지 후 기본 주소 변경 여부 결정
-
-## 보안과 한계
-
-- 세션은 HttpOnly/Secure/SameSite=Lax 쿠키. DB에는 세션 토큰 해시만 저장.
-- OAuth state를 쿠키와 대조하고 1회만 사용. 카카오 액세스 토큰은 로그인 처리 후 보관하지 않음.
-- 쓰기 요청은 동일 origin과 세션별 CSRF 검증. 공개 CORS 없음.
-- 방 ID는 무작위이며 방 참가자만 점수 조회 가능. 초대 링크가 재전달되면 받은 사람도 가입 후 참가 가능하므로 링크를 공개하지 마세요.
-- 클라이언트 점수는 받지 않고 서버에서 방향 목록을 재생. 다른 사람의 시도/중복 제출/무효 이동/만료 시도 거부.
-- **자동 플레이/봇을 완전히 막는 시스템은 아닙니다.** 캐주얼 친구 경쟁용이며 현금/상품 순위전에 적합하다고 보장하지 않습니다.
-- 게임 데이터 삭제는 이 서비스의 서버 데이터를 삭제합니다. 카카오계정 연결 해제는 카카오의 연결된 서비스 설정에서 별도로 가능.
-
-## 참고 문서와 리소스
-
-- 카카오 로그인 설정: https://developers.kakao.com/docs/ko/kakaologin/prerequisite
-- 친구 목록 제약: https://developers.kakao.com/docs/ko/kakaotalk-social/common
-- 공유 SDK: https://developers.kakao.com/docs/ko/kakaotalk-share/js-link
-- 공식 로그인 버튼: https://developers.kakao.com/tool/resource/login
-- `assets/kakao-login.svg`는 카카오가 제공한 공식 로그인 버튼이며 Kakao의 디자인/사용 정책을 따릅니다. 프로젝트 자체 MIT 코드 라이선스와 별도입니다.
+GitHub main의 Pages 배포는 싱글 플레이와 친구 서버 진입 버튼을 갱신합니다. Worker 변경은 위 Wrangler 명령으로 별도 배포합니다. 배포용 API 토큰이 만료되어도 이미 배포한 게임은 계속 동작합니다. 다른 주소로 이전할 때는 PUBLIC_ORIGIN과 league.js의 FRIENDS_ORIGIN도 함께 바꾸세요.
